@@ -3,8 +3,8 @@
   "name": "Towngas 港华燃气",
   "codeowners": ["@towngas-ha"],
   "config_flow": true,
-  "documentation": "https://github.com/USERNAME/towngas-ha",
+  "documentation": "https://github.com/ccbslsx/towngas-ha",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/USERNAME/towngas-ha/issues",
+  "issue_tracker": "https://github.com/ccbslsx/towngas-ha/issues",
   "version": "1.0.2"
 }

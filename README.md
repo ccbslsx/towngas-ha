@@ -47,8 +47,8 @@
 cd towngas-ha
 
 # 首次推送：在 github.com 上新建一个空仓库（如 towngas-ha，公开/私有均可），
-# 然后把下面两行里的 <你的用户名> 换成实际用户名，执行：
-git remote add origin https://github.com/<你的用户名>/towngas-ha.git
+# 然后执行（已填入你的用户名 ccbslsx）：
+git remote add origin https://github.com/ccbslsx/towngas-ha.git
 git branch -M main
 git push -u origin main
 ```
@@ -66,7 +66,7 @@ git push -u origin main
 
 1. HA → 设置 → 设备与服务 → 底部 **HACS**（或侧边栏 HACS）；
 2. 右上角 **⋮ → 自定义仓库 (Custom repositories)**；
-3. 仓库地址填 `https://github.com/<你的用户名>/towngas-ha`，**类别选 Integration**；
+3. 仓库地址填 `https://github.com/ccbslsx/towngas-ha`，**类别选 Integration**；
 4. 点击「添加」。
 
 #### 第 3 步：安装集成
