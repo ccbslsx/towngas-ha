@@ -10,20 +10,34 @@ Reverse engineered from https://maanshan.towngasvcc.com frontend:
   (e.g. ``{"datas": [...], ...}``) WITHOUT a ``resultCode`` key. Only error
   responses carry a ``resultCode`` (e.g. ``20001`` = access token expired).
 * resultCode 20001 / 40058 mean the token is invalid or expired.
+* Token 刷新走平台级 oauth 服务（weixin.towngasvcc.com），与城市业务 host 解耦；
+  签名 = MD5(排序的 key+value 拼接 + 盐 SIGN_SALT) 转大写。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
+import time
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import aiohttp
 
-from .const import AUTH_ERROR_CODES, CLIENT_ID, LOGGER
+from .const import (
+    AUTH_ERROR_CODES,
+    CLIENT_ID,
+    DEFAULT_TOKEN_EXPIRES_IN,
+    LOGGER,
+    OAUTH_REFRESH_URL,
+    SIGN_SALT,
+    TOKEN_EXPIRY_BUFFER_SECS,
+    USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +48,6 @@ CODE_QUERY_ACCT_RES = 3509
 CODE_QUERY_UNPAID_BILLS = 3514
 CODE_QUERY_LAST_READINGS = 3511
 CODE_QUERY_BIND_SUBS = 3529
-CODE_OAUTH_TOKEN = 1502
 
 
 class TownGasAuthError(Exception):
@@ -48,9 +61,22 @@ class TownGasApiError(Exception):
 class TokenStore:
     """Mutable holder so the client can use refreshed tokens."""
 
-    def __init__(self, access_token: str, refresh_token: str | None = None) -> None:
+    def __init__(
+        self,
+        access_token: str,
+        refresh_token: str | None = None,
+        expires_at: float = 0.0,
+    ) -> None:
         self.access_token = access_token
         self.refresh_token = refresh_token
+        # epoch 秒；0 = 未知（退化为被动刷新）
+        self.expires_at = float(expires_at or 0.0)
+
+    def is_near_expiry(self, buffer: int = TOKEN_EXPIRY_BUFFER_SECS) -> bool:
+        """True 当已知过期时间且已接近过期（提前 buffer 秒）。"""
+        if not self.expires_at:
+            return False
+        return (self.expires_at - buffer) <= time.time()
 
 
 def _build_seq(code: int) -> str:
@@ -60,6 +86,32 @@ def _build_seq(code: int) -> str:
         + datetime.now().strftime("%Y%m%d%H%M%S")
         + f"{random.randint(0, 10**13 - 1):013d}"
     )
+
+
+def _sign(params: dict[str, Any]) -> str:
+    """平台级签名：排序的 key+value 拼接 + 盐 SIGN_SALT，MD5 转大写。
+
+    sign 字段本身不参与签名；空字符串 / None 的值也排除。
+    """
+    keys = sorted(
+        k
+        for k, v in params.items()
+        if k != "sign" and v is not None and v != ""
+    )
+    raw = "".join(f"{k}{params[k]}" for k in keys)
+    return hashlib.md5((raw + SIGN_SALT).encode()).hexdigest().upper()
+
+
+def _extract_token_payload(data: dict[str, Any]) -> dict[str, Any] | None:
+    """从刷新响应里取有效的 token 载荷（扁平或嵌套于 datas）。"""
+    if not isinstance(data, dict):
+        return None
+    if data.get("access_token"):
+        return data
+    datas = data.get("datas")
+    if isinstance(datas, dict) and datas.get("access_token"):
+        return datas
+    return None
 
 
 class TownGasApiClient:
@@ -222,26 +274,26 @@ class TownGasApiClient:
         )
 
     async def async_try_refresh_token(self) -> bool:
-        """Best-effort attempt to refresh the access token.
+        """Use refresh_token to obtain a fresh access_token (平台级 oauth).
 
-        The web frontend never refreshes programmatically, so the exact
-        contract is unverified. Returns True and updates the token store
-        on success.
+        Returns True and updates the token store (access_token /
+        refresh_token / expires_at) on success. On failure returns False —
+        the caller should then fall back to reauth.
         """
         refresh_token = self.tokens.refresh_token
         if not refresh_token:
+            LOGGER.debug("no refresh_token available; cannot refresh")
             return False
-        url = (
-            f"{self._base_url}/openapi/uv1/oauth/token"
-            f"?seq={_build_seq(CODE_OAUTH_TOKEN)}"
-            f"&client_id={CLIENT_ID}"
-            f"&refresh_token={refresh_token}"
-            "&grant_type=refresh_token&scope=read%20write"
-        )
+
+        ts = int(time.time() * 1000)
+        params = {"timestamp": ts, "refreshToken": refresh_token}
+        params["sign"] = _sign(params)
+        url = f"{OAUTH_REFRESH_URL}?{urlencode(params)}"
+
         try:
-            async with self._session.get(
+            async with self._session.post(
                 url,
-                headers={"User-Agent": "Mozilla/5.0"},
+                headers={"User-Agent": USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 resp.raise_for_status()
@@ -253,20 +305,28 @@ class TownGasApiClient:
             LOGGER.debug("Token refresh network error: %s", err)
             return False
 
-        if str(data.get("resultCode", "")) != "0":
-            LOGGER.debug("Token refresh failed: %s", data)
+        payload = _extract_token_payload(data)
+        if not payload:
+            rc = data.get("resultCode") or data.get("result_code")
+            if rc:
+                # 业务级错误（如 90143 refreshToken 已失效）→ 确定性刷新失败
+                LOGGER.warning(
+                    "Token 刷新失败 resultCode=%s msg=%s",
+                    rc,
+                    data.get("resultMsg") or data.get("resultMsg"),
+                )
+            else:
+                LOGGER.warning("Token 刷新返回异常响应: %s", data)
             return False
 
-        payload = data.get("datas") or data
-        new_token = (
-            payload.get("access_token")
-            if isinstance(payload, dict)
-            else None
-        ) or (data.get("access_token"))
-        if not new_token or new_token == self.tokens.access_token:
+        new_access = payload.get("access_token")
+        if not new_access or new_access == self.tokens.access_token:
             return False
-        self.tokens.access_token = new_token
-        if isinstance(payload, dict) and payload.get("refresh_token"):
+
+        self.tokens.access_token = new_access
+        if payload.get("refresh_token"):
             self.tokens.refresh_token = payload["refresh_token"]
-        LOGGER.info("Towngas access token refreshed")
+        expires_in = int(payload.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
+        self.tokens.expires_at = time.time() + expires_in
+        LOGGER.info("Towngas access token 已刷新，有效期 %s 秒", expires_in)
         return True

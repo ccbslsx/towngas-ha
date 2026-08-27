@@ -1,0 +1,36 @@
+name: Release
+
+# 打 tag（如 v1.0.8）并 push 后，自动把 custom_components/towngas/ 打包成
+# towngas.zip 并创建一个 GitHub Release。HACS 与手动下载都可用。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & publish release zip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+
+      - name: Create release zip
+        run: |
+          cd custom_components/towngas
+          zip -r ../../towngas.zip .
+          cd ../..
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.VERSION }}
+          files: towngas.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

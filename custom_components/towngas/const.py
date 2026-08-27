@@ -13,6 +13,8 @@ CONF_BASE_URL: Final = "base_url"
 CONF_ACCESS_TOKEN: Final = "access_token"
 CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_SUBSCRIPTIONS: Final = "subscriptions"
+# 持久化的 token 过期时间戳（epoch 秒）。0 = 未知（退化为被动刷新）。
+CONF_TOKEN_EXPIRES_AT: Final = "token_expires_at"
 
 # Options
 OPT_SCAN_INTERVAL: Final = "scan_interval"          # 数据刷新间隔（秒）
@@ -41,3 +43,17 @@ CLIENT_ID: Final = "db196d62f7d211e8a9b2fa163e955d28"
 
 # resultCode values that mean "token invalid / expired"
 AUTH_ERROR_CODES: Final = {"20001", "40058"}
+
+# --- Token 刷新（平台级 oauth，城市间通用） ---
+# 刷新端点位于共享 oauth 服务（与杭州/马鞍山业务 host 解耦）。
+OAUTH_REFRESH_URL: Final = (
+    "https://weixin.towngasvcc.com/vcc-oauth/oauth/authorize2/refreshToken"
+)
+# 签名盐：MD5(排序的 key+value 拼接 + 本盐) 后转大写。平台级，城市通用。
+SIGN_SALT: Final = "hbasesoft.com-prod"
+# 当 expires_in 缺失时的兜底值（秒）。
+DEFAULT_TOKEN_EXPIRES_IN: Final = 7200
+# 在 token 真正过期前多少秒提前刷新，避免临界窗口内请求失败。
+TOKEN_EXPIRY_BUFFER_SECS: Final = 120
+
+USER_AGENT: Final = "Mozilla/5.0"

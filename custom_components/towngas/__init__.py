@@ -18,6 +18,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTIONS,
+    CONF_TOKEN_EXPIRES_AT,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
     OPT_TOKEN_REFRESH_INTERVAL,
@@ -38,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         TokenStore(
             entry.data[CONF_ACCESS_TOKEN],
             entry.data.get(CONF_REFRESH_TOKEN),
+            entry.data.get(CONF_TOKEN_EXPIRES_AT, 0) or 0,
         ),
     )
     coordinator = TownGasCoordinator(

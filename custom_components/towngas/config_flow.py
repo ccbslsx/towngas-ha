@@ -26,6 +26,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTIONS,
+    CONF_TOKEN_EXPIRES_AT,
     DEFAULT_BASE_URL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
@@ -83,16 +84,36 @@ def _parse_token_input(raw: str) -> tuple[str, str | None]:
     return raw, None
 
 
-async def _validate(
+async def _finalize_tokens(
     hass, base_url: str, access: str, refresh: str | None
-) -> list[dict[str, Any]]:
-    """Validate the token; returns bound subs. Raises on failure."""
+) -> dict[str, Any]:
+    """Validate, then attempt a token refresh to capture a fresh token + expiry.
+
+    Returns a dict with access_token / refresh_token / token_expires_at /
+    subscriptions. The access token is first validated (so an invalid token
+    fails loudly); a successful refresh swaps in the freshly-issued tokens and
+    expiry. If the refresh_token happens to be unusable we keep the original
+    (already-valid) access token with an unknown expiry (0) — reactive refresh
+    will handle it later, so setup never blocks on a flaky refresh.
+    """
     client = TownGasApiClient(
         async_get_clientsession(hass),
         base_url,
         TokenStore(access, refresh),
     )
-    return await client.async_validate_token()
+    # raises TownGasAuthError / TownGasApiError on failure
+    subs = await client.async_validate_token()
+    expires_at = 0.0
+    if await client.async_try_refresh_token():
+        access = client.tokens.access_token
+        refresh = client.tokens.refresh_token
+        expires_at = client.tokens.expires_at
+    return {
+        CONF_ACCESS_TOKEN: access,
+        CONF_REFRESH_TOKEN: refresh,
+        CONF_TOKEN_EXPIRES_AT: expires_at,
+        CONF_SUBSCRIPTIONS: subs,
+    }
 
 
 class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -103,6 +124,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._access_token: str | None = None
         self._refresh_token: str | None = None
+        self._token_expires_at: float = 0.0
         self._base_url: str = DEFAULT_BASE_URL
         self._subs: list[dict[str, Any]] = []
 
@@ -126,7 +148,9 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ACCESS_TOKEN] = "invalid_token_format"
             else:
                 try:
-                    subs = await _validate(self.hass, base_url, access, refresh)
+                    finalized = await _finalize_tokens(
+                        self.hass, base_url, access, refresh
+                    )
                 except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
                     description_placeholders["detail"] = _format_detail(err)
@@ -136,11 +160,12 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     description_placeholders["detail"] = _format_detail(err)
                     description_placeholders["base_url"] = base_url
                 else:
-                    self._access_token = access
-                    self._refresh_token = refresh
+                    self._access_token = finalized[CONF_ACCESS_TOKEN]
+                    self._refresh_token = finalized[CONF_REFRESH_TOKEN]
+                    self._token_expires_at = finalized[CONF_TOKEN_EXPIRES_AT]
                     self._base_url = base_url
-                    self._subs = subs
-                    if not subs:
+                    self._subs = finalized[CONF_SUBSCRIPTIONS]
+                    if not self._subs:
                         errors["base"] = "no_subscriptions"
                     else:
                         return await self.async_step_subs()
@@ -196,6 +221,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_ACCESS_TOKEN: self._access_token,
                         CONF_REFRESH_TOKEN: self._refresh_token,
+                        CONF_TOKEN_EXPIRES_AT: self._token_expires_at,
                         CONF_BASE_URL: self._base_url,
                         CONF_SUBSCRIPTIONS: subs,
                     },
@@ -229,7 +255,9 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ACCESS_TOKEN] = "invalid_token_format"
             else:
                 try:
-                    await _validate(self.hass, base_url, access, refresh)
+                    finalized = await _finalize_tokens(
+                        self.hass, base_url, access, refresh
+                    )
                 except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
                     description_placeholders["detail"] = _format_detail(err)
@@ -238,8 +266,11 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     description_placeholders["detail"] = _format_detail(err)
                 else:
                     new_data = dict(entry.data)
-                    new_data[CONF_ACCESS_TOKEN] = access
-                    new_data[CONF_REFRESH_TOKEN] = refresh
+                    new_data[CONF_ACCESS_TOKEN] = finalized[CONF_ACCESS_TOKEN]
+                    new_data[CONF_REFRESH_TOKEN] = finalized[CONF_REFRESH_TOKEN]
+                    new_data[CONF_TOKEN_EXPIRES_AT] = finalized[
+                        CONF_TOKEN_EXPIRES_AT
+                    ]
                     return self.async_update_reload_and_abort(
                         entry, data=new_data
                     )

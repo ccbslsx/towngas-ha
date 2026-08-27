@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
+    CONF_TOKEN_EXPIRES_AT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
@@ -180,18 +181,36 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         return cur >= start or cur <= end
 
     async def async_token_health_check(self, now: datetime | None = None) -> None:
-        """Periodically verify the token is still valid.
+        """Periodically keep the token alive.
 
         Runs on its own interval (token_refresh_interval) and is NOT skipped
-        during the maintenance window. Detects expiry early and triggers the
-        reauth flow so the user is prompted for a fresh token.
+        during the maintenance window. Order of operations:
+
+        1. If the access token is known to be near expiry, proactively refresh
+           it (silent keepalive — never prompts the user).
+        2. Otherwise validate the token. On an auth error, try to refresh;
+           only if that also fails do we fall back to the reauth flow.
         """
         if not self.client.tokens.access_token:
             return
+
+        # 1. 主动刷新：已知过期时间且临近过期
+        if self.client.tokens.is_near_expiry():
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
+                _LOGGER.info("港华燃气 token 主动刷新成功")
+                return
+            # 临近过期但刷新失败 → 落到下面的校验分支决定是否需要 reauth
+
+        # 2. 校验 → 失败则尝试刷新 → 仍失败才 reauth
         try:
             await self.client.async_validate_token()
         except TownGasAuthError:
-            _LOGGER.warning("港华燃气 token 已失效，触发重新认证流程")
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
+                _LOGGER.info("港华燃气 token 过期后刷新成功")
+                return
+            _LOGGER.warning("港华燃气 token 已失效且刷新失败，触发重新认证流程")
             self.hass.config_entries.async_start_reauth(
                 self.hass, self.entry.entry_id
             )
@@ -200,9 +219,10 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             _LOGGER.debug("Token 健康检查请求失败(可能网络抖动)，跳过: %s", err)
 
     def _persist_tokens(self) -> None:
-        """Write a refreshed access token back into the config entry."""
+        """Write refreshed tokens + expiry back into the config entry."""
         new_data = dict(self.entry.data)
-        new_data["access_token"] = self.client.tokens.access_token
+        new_data[CONF_ACCESS_TOKEN] = self.client.tokens.access_token
         if self.client.tokens.refresh_token:
-            new_data["refresh_token"] = self.client.tokens.refresh_token
+            new_data[CONF_REFRESH_TOKEN] = self.client.tokens.refresh_token
+        new_data[CONF_TOKEN_EXPIRES_AT] = self.client.tokens.expires_at
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
