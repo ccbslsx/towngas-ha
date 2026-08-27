@@ -13,3 +13,6 @@ Thumbs.db
 
 # Packaging output (keep the source tree clean)
 *.zip
+
+# 用气统计输出（含个人用气数据，不提交）
+towngas_stats_out/

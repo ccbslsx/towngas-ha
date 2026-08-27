@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -104,6 +105,63 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:calendar-month-outline",
     ),
 )
+
+
+# 账户级 token 展示（供用户在界面上查询/复制最新 token，例如粘贴到统计脚本）。
+# 注意：token 属敏感凭证，仅在本机 HA 中可见。
+TOKEN_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="access_token",
+        name="Access Token",
+        icon="mdi:key-variant",
+    ),
+    SensorEntityDescription(
+        key="refresh_token",
+        name="Refresh Token",
+        icon="mdi:key-change",
+    ),
+    SensorEntityDescription(
+        key="token_expires_at",
+        name="Token 过期时间",
+        icon="mdi:clock-alert-outline",
+    ),
+)
+
+
+class TownGasTokenEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
+    """Account-level entities that mirror the current token state."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: TownGasCoordinator,
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{DOMAIN}_token_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "account")},
+            name="港华燃气 账户",
+            manufacturer="港华燃气 Towngas",
+            configuration_url=coordinator.entry.data.get("base_url"),
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        key = self.entity_description.key
+        tokens = self.coordinator.client.tokens
+        if key == "access_token":
+            return tokens.access_token
+        if key == "refresh_token":
+            return tokens.refresh_token
+        if key == "token_expires_at":
+            exp = tokens.expires_at or 0
+            if not exp:
+                return "未知"
+            return datetime.fromtimestamp(exp).strftime("%Y-%m-%d %H:%M:%S")
+        return None
 
 
 class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
@@ -244,8 +302,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up Towngas sensors from a config entry."""
     coordinator: TownGasCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[TownGasSensorEntity] = []
+    entities: list[SensorEntity] = []
     for sub_key in coordinator.data:
         for description in SENSOR_DESCRIPTIONS:
             entities.append(TownGasSensorEntity(coordinator, sub_key, description))
+    # 账户级：展示最新 token（token 为账户级，不随户号重复创建）
+    for description in TOKEN_DESCRIPTIONS:
+        entities.append(TownGasTokenEntity(coordinator, description))
     async_add_entities(entities)

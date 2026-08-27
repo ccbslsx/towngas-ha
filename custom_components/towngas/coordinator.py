@@ -211,9 +211,13 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 _LOGGER.info("港华燃气 token 过期后刷新成功")
                 return
             _LOGGER.warning("港华燃气 token 已失效且刷新失败，触发重新认证流程")
-            self.hass.config_entries.async_start_reauth(
-                self.hass, self.entry.entry_id
-            )
+            try:
+                # HA 2024.2+ 的推荐写法：直接传 ConfigEntry，由框架创建 reauth 流。
+                # （旧版 async_start_reauth(flow_id) 已移除，调用会抛 AttributeError。）
+                self.hass.config_entries.async_reauth_entry(self.entry)
+            except Exception as err:  # noqa: BLE001
+                # 即使触发失败也不能让健康检查后台任务抛出未捕获异常
+                _LOGGER.error("触发重新认证流程失败: %s", err)
         except TownGasApiError as err:
             # 网络抖动：下个周期再试，不触发 reauth
             _LOGGER.debug("Token 健康检查请求失败(可能网络抖动)，跳过: %s", err)
