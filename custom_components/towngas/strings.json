@@ -1,0 +1,55 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "港华燃气（Towngas）",
+        "description": "登录 {base_url} 后，按 F12 → 应用 → 本地存储 → 复制键 token 的值粘贴到下面（支持整个 JSON 或仅 access_token）。",
+        "data": {
+          "access_token": "Access Token（localStorage 中的 token 值）",
+          "base_url": "营业厅地址"
+        }
+      },
+      "subs": {
+        "title": "选择燃气户号",
+        "description": "选择要添加为设备的燃气户号。",
+        "data": {
+          "subscriptions": "户号"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Token 已过期",
+        "description": "access token 已过期。请重新登录网上营业厅，复制新的 token 值粘贴到下面。",
+        "data": {
+          "access_token": "新的 Access Token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到港华燃气服务器",
+      "invalid_auth": "Token 无效或已过期，请重新登录并复制新的 token",
+      "invalid_token_format": "无法解析 token，请粘贴 localStorage 中键为 token 的完整内容",
+      "no_subscriptions": "该账号下没有绑定任何户号，请先在网上营业厅绑定",
+      "no_subscriptions_selected": "请至少选择一个户号"
+    },
+    "abort": {
+      "reauth_successful": "重新认证成功"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "港华燃气选项",
+        "description": "每日 23:30–00:30（CST）为港华燃气系统维护窗口，此期间自动跳过数据请求，传感器保持上次读数；Token 健康检查不受影响。",
+        "data": {
+          "scan_interval": "数据刷新间隔（秒，60-86400，默认 21600）",
+          "token_refresh_interval": "Token 刷新间隔（秒，300-7140，默认 1800）"
+        }
+      }
+    },
+    "error": {
+      "invalid_number": "请输入整数",
+      "scan_out_of_range": "数据刷新间隔需在 60–86400 秒之间",
+      "token_out_of_range": "Token 刷新间隔需在 300–7140 秒之间"
+    }
+  }
+}
