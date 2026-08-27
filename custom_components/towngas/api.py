@@ -6,7 +6,9 @@ Reverse engineered from https://maanshan.towngasvcc.com frontend:
 * URL pattern:
     {base}/openapi/uv1/<path>?seq=<seq>&token=<access_token>&<params...>
   where seq = zero-padded 5-digit interface code + YYYYMMDDHHmmss + 13 random digits.
-* Response JSON always contains resultCode ("0" = success) and resultMsg.
+* Response JSON: successful calls return the data payload directly
+  (e.g. ``{"datas": [...], ...}``) WITHOUT a ``resultCode`` key. Only error
+  responses carry a ``resultCode`` (e.g. ``20001`` = access token expired).
 * resultCode 20001 / 40058 mean the token is invalid or expired.
 """
 
@@ -124,13 +126,19 @@ class TownGasApiClient:
         except json.JSONDecodeError as err:
             raise TownGasApiError("服务器返回了无法解析的数据") from err
 
-        result_code = str(data.get("resultCode", ""))
-        if result_code in AUTH_ERROR_CODES:
-            raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
-        if result_code != "0":
-            raise TownGasApiError(
-                f"接口错误 {result_code}: {data.get('resultMsg', '')}"
-            )
+        # The API only attaches ``resultCode`` on *error* responses. Successful
+        # responses return the payload directly (no resultCode key at all).
+        # So we must NOT require resultCode == "0" — doing so rejects every
+        # valid response and surfaces a misleading "cannot connect" error.
+        result_code = data.get("resultCode")
+        if result_code is not None:
+            rc = str(result_code)
+            if rc in AUTH_ERROR_CODES:
+                raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
+            if rc != "0":
+                raise TownGasApiError(
+                    f"接口错误 {rc}: {data.get('resultMsg', '')}"
+                )
         return data
 
     # ------------------------------------------------------------------
