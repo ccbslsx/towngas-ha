@@ -109,10 +109,14 @@ class TownGasApiClient:
             async with self._session.get(
                 url,
                 headers={"User-Agent": "Mozilla/5.0"},
-                ssl=False,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
+                resp.raise_for_status()
                 data = await resp.json(content_type=None)
+        except aiohttp.ClientResponseError as err:
+            raise TownGasApiError(
+                f"服务器返回 HTTP {err.status}: {err.message}"
+            ) from err
         except (TimeoutError, asyncio.TimeoutError) as err:
             raise TownGasApiError("连接港华燃气服务器超时") from err
         except aiohttp.ClientError as err:
@@ -230,11 +234,15 @@ class TownGasApiClient:
             async with self._session.get(
                 url,
                 headers={"User-Agent": "Mozilla/5.0"},
-                ssl=False,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
+                resp.raise_for_status()
                 data = await resp.json(content_type=None)
-        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError):
+        except aiohttp.ClientResponseError as err:
+            LOGGER.debug("Token refresh HTTP %s", err.status)
+            return False
+        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError) as err:
+            LOGGER.debug("Token refresh network error: %s", err)
             return False
 
         if str(data.get("resultCode", "")) != "0":

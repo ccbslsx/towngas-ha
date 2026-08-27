@@ -100,6 +100,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
         if user_input is not None:
             base_url = (
                 user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL) or DEFAULT_BASE_URL
@@ -113,10 +114,12 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 try:
                     subs = await _validate(self.hass, base_url, access, refresh)
-                except TownGasAuthError:
+                except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                except TownGasApiError:
+                    description_placeholders["detail"] = str(err)
+                except TownGasApiError as err:
                     errors["base"] = "cannot_connect"
+                    description_placeholders["detail"] = str(err)
                 else:
                     self._access_token = access
                     self._refresh_token = refresh
@@ -128,7 +131,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         return await self.async_step_subs()
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=STEP_USER_SCHEMA,
+            errors=errors,
+            description_placeholders=description_placeholders,
         )
 
     async def async_step_subs(
@@ -192,6 +198,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Ask for a fresh token."""
         errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
         entry = self._get_reauth_entry()
 
         if user_input is not None:
@@ -205,10 +212,12 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 try:
                     await _validate(self.hass, base_url, access, refresh)
-                except TownGasAuthError:
+                except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                except TownGasApiError:
+                    description_placeholders["detail"] = str(err)
+                except TownGasApiError as err:
                     errors["base"] = "cannot_connect"
+                    description_placeholders["detail"] = str(err)
                 else:
                     new_data = dict(entry.data)
                     new_data[CONF_ACCESS_TOKEN] = access
@@ -221,6 +230,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_ACCESS_TOKEN): str}),
             errors=errors,
+            description_placeholders=description_placeholders,
         )
 
     @staticmethod

@@ -25,8 +25,8 @@
       }
     },
     "error": {
-      "cannot_connect": "无法连接到港华燃气服务器",
-      "invalid_auth": "Token 无效或已过期，请重新登录并复制新的 token",
+      "cannot_connect": "无法连接到港华燃气服务器：{detail}",
+      "invalid_auth": "Token 无效或已过期，请重新登录并复制新的 token（{detail}）",
       "invalid_token_format": "无法解析 token，请粘贴 localStorage 中键为 token 的完整内容",
       "no_subscriptions": "该账号下没有绑定任何户号，请先在网上营业厅绑定",
       "no_subscriptions_selected": "请至少选择一个户号"

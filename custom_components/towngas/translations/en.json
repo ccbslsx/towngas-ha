@@ -25,8 +25,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the Towngas server",
-      "invalid_auth": "Token invalid or expired, log in again and paste a fresh token",
+      "cannot_connect": "Failed to connect to the Towngas server: {detail}",
+      "invalid_auth": "Token invalid or expired, log in again and paste a fresh token ({detail})",
       "invalid_token_format": "Could not parse the token, paste the full localStorage 'token' value",
       "no_subscriptions": "No gas account is bound to this login, bind one in the web portal first",
       "no_subscriptions_selected": "Select at least one account"
