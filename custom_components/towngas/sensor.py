@@ -12,7 +12,15 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CURRENCY_CNY, UnitOfVolume
+from homeassistant.const import UnitOfVolume
+
+# CURRENCY_CNY was removed from homeassistant.const in newer HA releases.
+# It is just the string "CNY"; fall back to the literal so we stay
+# compatible across old and new HA versions.
+try:
+    from homeassistant.const import CURRENCY_CNY
+except ImportError:  # pragma: no cover - depends on HA version
+    CURRENCY_CNY = "CNY"
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
