@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Towngas (港华燃气)",
-        "description": "Log in to {base_url}, then press F12 → Application → Local Storage and copy the value of the key 'token' (either the full JSON or just the access_token).",
+        "description": "Log in to {base_url}, then press F12 → Application → Local Storage and copy the value of the key 'token' (either the full JSON or just the access_token).{detail}",
         "data": {
           "access_token": "Access token (localStorage 'token' value)",
           "base_url": "Portal URL"
@@ -18,15 +18,15 @@
       },
       "reauth_confirm": {
         "title": "Token expired",
-        "description": "The access token has expired. Log in to the portal again and paste the new token below.",
+        "description": "The access token has expired. Log in to the portal again and paste the new token below.{detail}",
         "data": {
           "access_token": "New access token"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the Towngas server: {detail}",
-      "invalid_auth": "Token invalid or expired, log in again and paste a fresh token ({detail})",
+      "cannot_connect": "Failed to connect to the Towngas server",
+      "invalid_auth": "Token invalid or expired",
       "invalid_token_format": "Could not parse the token, paste the full localStorage 'token' value",
       "no_subscriptions": "No gas account is bound to this login, bind one in the web portal first",
       "no_subscriptions_selected": "Select at least one account"

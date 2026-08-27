@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "港华燃气（Towngas）",
-        "description": "登录 {base_url} 后，按 F12 → 应用 → 本地存储 → 复制键 token 的值粘贴到下面（支持整个 JSON 或仅 access_token）。",
+        "description": "登录 {base_url} 后，按 F12 → 应用 → 本地存储 → 复制键 token 的值粘贴到下面（支持整个 JSON 或仅 access_token）。{detail}",
         "data": {
           "access_token": "Access Token（localStorage 中的 token 值）",
           "base_url": "营业厅地址"
@@ -18,15 +18,15 @@
       },
       "reauth_confirm": {
         "title": "Token 已过期",
-        "description": "access token 已过期。请重新登录网上营业厅，复制新的 token 值粘贴到下面。",
+        "description": "access token 已过期。请重新登录网上营业厅，复制新的 token 值粘贴到下面。{detail}",
         "data": {
           "access_token": "新的 Access Token"
         }
       }
     },
     "error": {
-      "cannot_connect": "无法连接到港华燃气服务器：{detail}",
-      "invalid_auth": "Token 无效或已过期，请重新登录并复制新的 token（{detail}）",
+      "cannot_connect": "无法连接到港华燃气服务器",
+      "invalid_auth": "Token 无效或已过期",
       "invalid_token_format": "无法解析 token，请粘贴 localStorage 中键为 token 的完整内容",
       "no_subscriptions": "该账号下没有绑定任何户号，请先在网上营业厅绑定",
       "no_subscriptions_selected": "请至少选择一个户号"

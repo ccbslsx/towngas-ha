@@ -50,6 +50,18 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
+def _truncate(msg: str, limit: int = 240) -> str:
+    msg = str(msg or "").strip()
+    if len(msg) > limit:
+        msg = msg[:limit].rstrip() + "…"
+    return msg
+
+
+def _format_detail(err: Exception) -> str:
+    """Render an exception into a short detail suffix for the form description."""
+    return f"\n\n原因：{_truncate(err)}"
+
+
 def _parse_token_input(raw: str) -> tuple[str, str | None]:
     """Accept either a bare access_token or the full localStorage JSON."""
     raw = raw.strip()
@@ -75,8 +87,6 @@ async def _validate(
     hass, base_url: str, access: str, refresh: str | None
 ) -> list[dict[str, Any]]:
     """Validate the token; returns bound subs. Raises on failure."""
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
     client = TownGasApiClient(
         async_get_clientsession(hass),
         base_url,
@@ -100,7 +110,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {
+            "base_url": self._base_url or DEFAULT_BASE_URL,
+            "detail": "",
+        }
         if user_input is not None:
             base_url = (
                 user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL) or DEFAULT_BASE_URL
@@ -116,10 +129,12 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     subs = await _validate(self.hass, base_url, access, refresh)
                 except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                    description_placeholders["detail"] = str(err)
+                    description_placeholders["detail"] = _format_detail(err)
+                    description_placeholders["base_url"] = base_url
                 except TownGasApiError as err:
                     errors["base"] = "cannot_connect"
-                    description_placeholders["detail"] = str(err)
+                    description_placeholders["detail"] = _format_detail(err)
+                    description_placeholders["base_url"] = base_url
                 else:
                     self._access_token = access
                     self._refresh_token = refresh
@@ -198,7 +213,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Ask for a fresh token."""
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {"detail": ""}
         entry = self._get_reauth_entry()
 
         if user_input is not None:
@@ -214,10 +229,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await _validate(self.hass, base_url, access, refresh)
                 except TownGasAuthError as err:
                     errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                    description_placeholders["detail"] = str(err)
+                    description_placeholders["detail"] = _format_detail(err)
                 except TownGasApiError as err:
                     errors["base"] = "cannot_connect"
-                    description_placeholders["detail"] = str(err)
+                    description_placeholders["detail"] = _format_detail(err)
                 else:
                     new_data = dict(entry.data)
                     new_data[CONF_ACCESS_TOKEN] = access
