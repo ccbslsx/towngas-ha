@@ -187,7 +187,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 subs = []
                 for sel in selected:
                     org_code, subs_code = sel.split("|", 1)
-                    subs.append({"orgCode": org_code, "subsCode": subs_code})
+                    # Store with snake_case keys — the rest of the integration
+                    # (coordinator / sensor) reads subs_code / org_code. Storing
+                    # camelCase here would raise KeyError on first refresh.
+                    subs.append({"org_code": org_code, "subs_code": subs_code})
                 return self.async_create_entry(
                     title="港华燃气",
                     data={
