@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
@@ -22,6 +23,7 @@ from .const import (
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
     OPT_TOKEN_REFRESH_INTERVAL,
+    SERVICE_FORCE_REFRESH,
 )
 from .coordinator import TownGasCoordinator
 
@@ -79,6 +81,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # 注册调试/手动服务（仅注册一次，跨所有 entry 共用）。
+    # 用途：手动触发一次真实 token 刷新，用于验证「过期自动刷新」机制是否工作，
+    #       或在不想等自动周期时立即续期。刷新成功后 token 传感器状态会同步更新。
+    if not hass.services.has_service(DOMAIN, SERVICE_FORCE_REFRESH):
+
+        async def _handle_force_refresh(call: ServiceCall) -> dict[str, Any]:
+            entry_id = call.data.get("entry_id")
+            out: dict[str, Any] = {"results": []}
+            for e in hass.config_entries.async_entries(DOMAIN):
+                if entry_id and e.entry_id != entry_id:
+                    continue
+                coordinator = hass.data.get(DOMAIN, {}).get(e.entry_id)
+                if coordinator is None:
+                    continue
+                before = coordinator.client.tokens.expires_at
+                ok = await coordinator.client.async_try_refresh_token()
+                if ok:
+                    coordinator._persist_tokens()
+                    coordinator.async_write_ha_state()
+                    after = coordinator.client.tokens.expires_at
+                    _LOGGER.info(
+                        "强制刷新成功 entry=%s 旧expires_at=%.0f 新expires_at=%.0f",
+                        e.title or e.entry_id, before, after,
+                    )
+                    out["results"].append(
+                        {
+                            "entry": e.title or e.entry_id,
+                            "refreshed": True,
+                            "old_expires_at": before,
+                            "new_expires_at": after,
+                        }
+                    )
+                else:
+                    _LOGGER.warning(
+                        "强制刷新失败 entry=%s（refresh_token 可能已失效，需重新粘贴）",
+                        e.title or e.entry_id,
+                    )
+                    out["results"].append(
+                        {"entry": e.title or e.entry_id, "refreshed": False}
+                    )
+            return out
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_FORCE_REFRESH, _handle_force_refresh
+        )
+
     return True
 
 

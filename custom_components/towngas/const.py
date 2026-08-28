@@ -57,3 +57,6 @@ DEFAULT_TOKEN_EXPIRES_IN: Final = 7200
 TOKEN_EXPIRY_BUFFER_SECS: Final = 120
 
 USER_AGENT: Final = "Mozilla/5.0"
+
+# 调试/手动服务：强制刷新 token（用于验证刷新机制是否工作）
+SERVICE_FORCE_REFRESH: Final = "force_refresh_token"
