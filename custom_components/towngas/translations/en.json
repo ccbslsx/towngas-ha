@@ -18,9 +18,9 @@
       },
       "reauth_confirm": {
         "title": "Token expired",
-        "description": "The access token has expired. Log in to the portal again and paste the new token below.{detail}",
+        "description": "The access token has expired. Log in to the portal again, press F12 → Application → Local Storage, and paste the FULL value of the 'token' key below (it must include the refresh_token field — otherwise the refresh token is empty and the prompt will reappear soon).{detail}",
         "data": {
-          "access_token": "New access token"
+          "access_token": "New token (paste the full JSON including refresh_token)"
         }
       }
     },

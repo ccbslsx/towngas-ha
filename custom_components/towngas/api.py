@@ -330,3 +330,21 @@ class TownGasApiClient:
         self.tokens.expires_at = time.time() + expires_in
         LOGGER.info("Towngas access token 已刷新，有效期 %s 秒", expires_in)
         return True
+
+    async def async_refresh_if_near_expiry(self) -> bool:
+        """临近过期时主动刷新；返回是否真的发起了刷新。
+
+        借鉴杭州项目的 ensure_token 思路：在真正发业务请求之前先续期，
+        避免把请求打在已经过期的 token 上。expires_at 未知(0)时退化为被动刷新。
+        """
+        if self.tokens.is_near_expiry():
+            return await self.async_try_refresh_token()
+        return False
+
+    async def async_ensure_token(self) -> bool:
+        """确保有可用 token：临近过期则刷新。返回当前是否有可用 access_token。"""
+        if not self.tokens.access_token:
+            return False
+        if self.tokens.is_near_expiry():
+            return await self.async_try_refresh_token()
+        return True

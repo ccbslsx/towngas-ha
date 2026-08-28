@@ -18,9 +18,9 @@
       },
       "reauth_confirm": {
         "title": "Token 已过期",
-        "description": "access token 已过期。请重新登录网上营业厅，复制新的 token 值粘贴到下面。{detail}",
+        "description": "access token 已过期。请重新登录网上营业厅，按 F12 → 应用 → 本地存储，复制键 token 的【完整内容】粘贴到下面（务必包含 refresh_token 字段，否则刷新令牌无效、很快就会再次过期弹窗）。{detail}",
         "data": {
-          "access_token": "新的 Access Token"
+          "access_token": "新的 Token（建议粘贴含 refresh_token 的完整 JSON）"
         }
       }
     },

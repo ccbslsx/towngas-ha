@@ -147,6 +147,11 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             )
             return self.data
 
+        # 0. 主动续期：已知过期时间且临近过期时，先刷新再拉数据，
+        #    避免把请求打在已经过期的 token 上（借鉴杭州项目的 ensure_token 思路）。
+        if await self.client.async_refresh_if_near_expiry():
+            self._persist_tokens()
+
         results = await asyncio.gather(
             *(
                 self._fetch_sub(sub["subs_code"], sub["org_code"])
