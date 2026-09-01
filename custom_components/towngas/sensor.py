@@ -125,6 +125,11 @@ TOKEN_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         name="Token 过期时间",
         icon="mdi:clock-alert-outline",
     ),
+    SensorEntityDescription(
+        key="token_refresh_status",
+        name="Token 刷新状态",
+        icon="mdi:sync-alert",
+    ),
 )
 
 
@@ -161,6 +166,9 @@ class TownGasTokenEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             if not exp:
                 return "未知"
             return datetime.fromtimestamp(exp).strftime("%Y-%m-%d %H:%M:%S")
+        if key == "token_refresh_status":
+            # 暴露最近一次刷新失败的原因，避免用户只看到"又过期了"无从排查
+            return tokens.last_refresh_error or "正常"
         return None
 
 

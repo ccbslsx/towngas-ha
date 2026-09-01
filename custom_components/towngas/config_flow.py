@@ -10,6 +10,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -63,6 +64,26 @@ def _format_detail(err: Exception) -> str:
     return f"\n\n原因：{_truncate(err)}"
 
 
+@callback
+def _async_warn_refresh_unusable(hass, error: str | None) -> None:
+    """Tell the user right away that the pasted refresh_token cannot refresh.
+
+    Without this the problem only surfaces much later, when the access token
+    finally expires and the integration asks for a new token again.
+    """
+    persistent_notification.async_create(
+        hass,
+        "新的 access_token 已保存，但**自动刷新测试没有通过**：\n\n"
+        f"`{_truncate(error or '未知原因', 300)}`\n\n"
+        "这意味着 token 到期后仍会再次要求你手动粘贴。请确认粘贴的是营业厅 "
+        "localStorage 里 **`token` 键的完整 JSON**（必须包含 `refresh_token` "
+        "字段），而不是只粘了 access_token 字符串。\n\n"
+        "可在「开发者工具 → 服务」调用 `towngas.force_refresh_token` 复测。",
+        title="港华燃气：token 自动刷新不可用",
+        notification_id=f"{DOMAIN}_refresh_unusable",
+    )
+
+
 def _parse_token_input(raw: str) -> tuple[str, str | None]:
     """Accept either a bare access_token or the full localStorage JSON."""
     raw = raw.strip()
@@ -104,7 +125,8 @@ async def _finalize_tokens(
     # raises TownGasAuthError / TownGasApiError on failure
     subs = await client.async_validate_token()
     expires_at = 0.0
-    if await client.async_try_refresh_token():
+    refresh_ok = await client.async_try_refresh_token()
+    if refresh_ok:
         access = client.tokens.access_token
         refresh = client.tokens.refresh_token
         expires_at = client.tokens.expires_at
@@ -113,6 +135,9 @@ async def _finalize_tokens(
         CONF_REFRESH_TOKEN: refresh,
         CONF_TOKEN_EXPIRES_AT: expires_at,
         CONF_SUBSCRIPTIONS: subs,
+        # 供配置流程判断新粘贴的 refresh_token 到底能不能用
+        "refresh_ok": refresh_ok,
+        "refresh_error": client.tokens.last_refresh_error,
     }
 
 
@@ -165,6 +190,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._token_expires_at = finalized[CONF_TOKEN_EXPIRES_AT]
                     self._base_url = base_url
                     self._subs = finalized[CONF_SUBSCRIPTIONS]
+                    if finalized.get("refresh_ok") is False:
+                        _async_warn_refresh_unusable(
+                            self.hass, finalized.get("refresh_error")
+                        )
                     if not self._subs:
                         errors["base"] = "no_subscriptions"
                     else:
@@ -271,6 +300,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     new_data[CONF_TOKEN_EXPIRES_AT] = finalized[
                         CONF_TOKEN_EXPIRES_AT
                     ]
+                    if finalized.get("refresh_ok") is False:
+                        _async_warn_refresh_unusable(
+                            self.hass, finalized.get("refresh_error")
+                        )
                     return self.async_update_reload_and_abort(
                         entry, data=new_data
                     )

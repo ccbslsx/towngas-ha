@@ -98,6 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     continue
                 before = coordinator.client.tokens.expires_at
                 ok = await coordinator.client.async_try_refresh_token()
+                has_refresh = bool(coordinator.client.tokens.refresh_token)
                 if ok:
                     coordinator._persist_tokens()
                     coordinator.async_write_ha_state()
@@ -110,17 +111,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         {
                             "entry": e.title or e.entry_id,
                             "refreshed": True,
+                            "has_refresh_token": has_refresh,
                             "old_expires_at": before,
                             "new_expires_at": after,
                         }
                     )
                 else:
-                    _LOGGER.warning(
-                        "强制刷新失败 entry=%s（refresh_token 可能已失效，需重新粘贴）",
-                        e.title or e.entry_id,
+                    reason = (
+                        coordinator.client.tokens.last_refresh_error
+                        or "未知原因"
                     )
+                    _LOGGER.warning(
+                        "强制刷新失败 entry=%s 原因：%s",
+                        e.title or e.entry_id, reason,
+                    )
+                    # 即使失败也刷新传感器，让「刷新状态」实体显示失败原因
+                    coordinator.async_write_ha_state()
                     out["results"].append(
-                        {"entry": e.title or e.entry_id, "refreshed": False}
+                        {
+                            "entry": e.title or e.entry_id,
+                            "refreshed": False,
+                            "has_refresh_token": has_refresh,
+                            "error": reason,
+                        }
                     )
             return out
 

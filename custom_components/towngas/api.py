@@ -71,6 +71,9 @@ class TokenStore:
         self.refresh_token = refresh_token
         # epoch 秒；0 = 未知（退化为被动刷新）
         self.expires_at = float(expires_at or 0.0)
+        # 最近一次刷新失败的原因（成功时置 None）。用于在界面/服务调用里
+        # 暴露刷新到底为什么失败，避免用户只看到"又过期了"而无从排查。
+        self.last_refresh_error: str | None = None
 
     def is_near_expiry(self, buffer: int = TOKEN_EXPIRY_BUFFER_SECS) -> bool:
         """True 当已知过期时间且已接近过期（提前 buffer 秒）。"""
@@ -282,7 +285,10 @@ class TownGasApiClient:
         """
         refresh_token = self.tokens.refresh_token
         if not refresh_token:
-            LOGGER.debug("no refresh_token available; cannot refresh")
+            self.tokens.last_refresh_error = (
+                "未保存 refresh_token（粘贴内容里没有 refresh_token 字段）"
+            )
+            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
         ts = int(time.time() * 1000)
@@ -299,36 +305,50 @@ class TownGasApiClient:
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
         except aiohttp.ClientResponseError as err:
-            LOGGER.debug("Token refresh HTTP %s", err.status)
+            self.tokens.last_refresh_error = f"刷新端点返回 HTTP {err.status}"
+            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
         except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError) as err:
-            LOGGER.debug("Token refresh network error: %s", err)
+            self.tokens.last_refresh_error = f"网络错误：{err}"
+            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
         payload = _extract_token_payload(data)
         if not payload:
             rc = data.get("resultCode") or data.get("result_code")
+            msg = data.get("resultMsg") or data.get("result_msg") or ""
             if rc:
                 # 业务级错误（如 90143 refreshToken 已失效）→ 确定性刷新失败
-                LOGGER.warning(
-                    "Token 刷新失败 resultCode=%s msg=%s",
-                    rc,
-                    data.get("resultMsg") or data.get("resultMsg"),
+                self.tokens.last_refresh_error = (
+                    f"服务端拒绝 resultCode={rc} {msg}".strip()
                 )
             else:
-                LOGGER.warning("Token 刷新返回异常响应: %s", data)
+                self.tokens.last_refresh_error = f"响应异常：{str(data)[:120]}"
+            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
         new_access = payload.get("access_token")
-        if not new_access or new_access == self.tokens.access_token:
+        if not new_access:
+            self.tokens.last_refresh_error = "响应里没有 access_token 字段"
+            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
+        # 注意：token 尚未到期时刷新，服务端常常原样返回同一个 access_token。
+        # 旧实现据此判为失败，导致 expires_at 一直是 0、is_near_expiry() 永远
+        # 为 False，主动续期机制等于被禁用，只能等 token 真正过期后被动刷新。
+        # 这里放宽：只要服务端正常响应就采信，并更新 expires_at。
+        rotated = new_access != self.tokens.access_token
         self.tokens.access_token = new_access
         if payload.get("refresh_token"):
             self.tokens.refresh_token = payload["refresh_token"]
         expires_in = int(payload.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
         self.tokens.expires_at = time.time() + expires_in
-        LOGGER.info("Towngas access token 已刷新，有效期 %s 秒", expires_in)
+        self.tokens.last_refresh_error = None
+        LOGGER.info(
+            "Towngas access token 已刷新，有效期 %s 秒（%s）",
+            expires_in,
+            "换发新 token" if rotated else "复用原 token",
+        )
         return True
 
     async def async_refresh_if_near_expiry(self) -> bool:
