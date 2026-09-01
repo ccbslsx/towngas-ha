@@ -10,14 +10,17 @@ Reverse engineered from https://maanshan.towngasvcc.com frontend:
   (e.g. ``{"datas": [...], ...}``) WITHOUT a ``resultCode`` key. Only error
   responses carry a ``resultCode`` (e.g. ``20001`` = access token expired).
 * resultCode 20001 / 40058 mean the token is invalid or expired.
-* Token 刷新走平台级 oauth 服务（weixin.towngasvcc.com），与城市业务 host 解耦；
-  签名 = MD5(排序的 key+value 拼接 + 盐 SIGN_SALT) 转大写。
+* Token 刷新走**业务 host 自己的标准 OAuth2 端点**
+  ``{base}/openapi/uv1/oauth/token?grant_type=refresh_token&...``，
+  响应为 ``{"access_token","token_type","refresh_token","expires_in","scope"}``。
+  实测马鞍山：access_token 寿命仅 899 秒，refresh_token **不轮换**（可永久复用）。
+  ⚠️ 不要使用 weixin.towngasvcc.com/vcc-oauth（微信小程序那套 oauth），
+  它与营业厅的 client_id 不互通，刷新恒定返回 90143「refreshToken已失效」。
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import random
@@ -31,10 +34,13 @@ import aiohttp
 from .const import (
     AUTH_ERROR_CODES,
     CLIENT_ID,
+    CODE_OAUTH_TOKEN,
     DEFAULT_TOKEN_EXPIRES_IN,
     LOGGER,
-    OAUTH_REFRESH_URL,
-    SIGN_SALT,
+    OAUTH_GRANT_TYPE_REFRESH,
+    OAUTH_REDIRECT_URI_PATH,
+    OAUTH_SCOPE,
+    OAUTH_TOKEN_PATH,
     TOKEN_EXPIRY_BUFFER_SECS,
     USER_AGENT,
 )
@@ -91,32 +97,6 @@ def _build_seq(code: int) -> str:
     )
 
 
-def _sign(params: dict[str, Any]) -> str:
-    """平台级签名：排序的 key+value 拼接 + 盐 SIGN_SALT，MD5 转大写。
-
-    sign 字段本身不参与签名；空字符串 / None 的值也排除。
-    """
-    keys = sorted(
-        k
-        for k, v in params.items()
-        if k != "sign" and v is not None and v != ""
-    )
-    raw = "".join(f"{k}{params[k]}" for k in keys)
-    return hashlib.md5((raw + SIGN_SALT).encode()).hexdigest().upper()
-
-
-def _extract_token_payload(data: dict[str, Any]) -> dict[str, Any] | None:
-    """从刷新响应里取有效的 token 载荷（扁平或嵌套于 datas）。"""
-    if not isinstance(data, dict):
-        return None
-    if data.get("access_token"):
-        return data
-    datas = data.get("datas")
-    if isinstance(datas, dict) and datas.get("access_token"):
-        return datas
-    return None
-
-
 class TownGasApiClient:
     """Thin async client around the 网上营业厅 openapi."""
 
@@ -147,9 +127,9 @@ class TownGasApiClient:
         if params:
             clean = {k: v for k, v in params.items() if v is not None}
             if clean:
-                url += "&" + "&".join(
-                    f"{k}={str(v)}" for k, v in clean.items()
-                )
+                # 必须做 URL 编码：oauth 端点的 scope 值为 "read write"（含空格），
+                # 直接拼进 URL 会产生非法 URL（http.client / aiohttp 均会拒绝）。
+                url += "&" + urlencode(clean)
         return url
 
     async def _get(
@@ -291,13 +271,23 @@ class TownGasApiClient:
             LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
-        ts = int(time.time() * 1000)
-        params = {"timestamp": ts, "refreshToken": refresh_token}
-        params["sign"] = _sign(params)
-        url = f"{OAUTH_REFRESH_URL}?{urlencode(params)}"
+        # 城市级标准 OAuth2 端点：{业务host}/openapi/uv1/oauth/token
+        # 实测有效，且 refresh_token 不轮换（可永久复用）。
+        redirect_uri = f"{self._base_url}{OAUTH_REDIRECT_URI_PATH}"
+        url = self._build_url(
+            CODE_OAUTH_TOKEN,
+            OAUTH_TOKEN_PATH,
+            {
+                "grant_type": OAUTH_GRANT_TYPE_REFRESH,
+                "refresh_token": refresh_token,
+                "scope": OAUTH_SCOPE,
+                "redirect_uri": redirect_uri,
+            },
+            authenticated=False,
+        )
 
         try:
-            async with self._session.post(
+            async with self._session.get(
                 url,
                 headers={"User-Agent": USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=30),
@@ -313,12 +303,13 @@ class TownGasApiClient:
             LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
-        payload = _extract_token_payload(data)
-        if not payload:
-            rc = data.get("resultCode") or data.get("result_code")
-            msg = data.get("resultMsg") or data.get("result_msg") or ""
+        # 成功响应形如 {"access_token","token_type","refresh_token","expires_in",
+        # "scope"}，不带 resultCode；只有错误响应才带 resultCode。
+        new_access = data.get("access_token") if isinstance(data, dict) else None
+        if not new_access:
+            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
+            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
             if rc:
-                # 业务级错误（如 90143 refreshToken 已失效）→ 确定性刷新失败
                 self.tokens.last_refresh_error = (
                     f"服务端拒绝 resultCode={rc} {msg}".strip()
                 )
@@ -327,21 +318,15 @@ class TownGasApiClient:
             LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
             return False
 
-        new_access = payload.get("access_token")
-        if not new_access:
-            self.tokens.last_refresh_error = "响应里没有 access_token 字段"
-            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
-            return False
-
-        # 注意：token 尚未到期时刷新，服务端常常原样返回同一个 access_token。
+        # 注意：token 尚未到期时刷新，服务端可能原样返回同一个 access_token。
         # 旧实现据此判为失败，导致 expires_at 一直是 0、is_near_expiry() 永远
         # 为 False，主动续期机制等于被禁用，只能等 token 真正过期后被动刷新。
         # 这里放宽：只要服务端正常响应就采信，并更新 expires_at。
         rotated = new_access != self.tokens.access_token
         self.tokens.access_token = new_access
-        if payload.get("refresh_token"):
-            self.tokens.refresh_token = payload["refresh_token"]
-        expires_in = int(payload.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
+        if data.get("refresh_token"):
+            self.tokens.refresh_token = data["refresh_token"]
+        expires_in = int(data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
         self.tokens.expires_at = time.time() + expires_in
         self.tokens.last_refresh_error = None
         LOGGER.info(
@@ -355,9 +340,15 @@ class TownGasApiClient:
         """临近过期时主动刷新；返回是否真的发起了刷新。
 
         借鉴杭州项目的 ensure_token 思路：在真正发业务请求之前先续期，
-        避免把请求打在已经过期的 token 上。expires_at 未知(0)时退化为被动刷新。
+        避免把请求打在已经过期的 token 上。
+
+        两种情况下会刷新：
+        1. 已知过期时间且临近过期（剩余寿命 < TOKEN_EXPIRY_BUFFER_SECS）；
+        2. 过期时间未知（expires_at == 0，例如首次启动或旧配置升级）——
+           此时不能假设 token 还新鲜，必须显式续期，否则会带着已过期的
+           token 去请求。
         """
-        if self.tokens.is_near_expiry():
+        if not self.tokens.expires_at or self.tokens.is_near_expiry():
             return await self.async_try_refresh_token()
         return False
 

@@ -20,7 +20,9 @@ CONF_TOKEN_EXPIRES_AT: Final = "token_expires_at"
 OPT_SCAN_INTERVAL: Final = "scan_interval"          # 数据刷新间隔（秒）
 DEFAULT_SCAN_INTERVAL: Final = 21600                # 默认 6 小时
 OPT_TOKEN_REFRESH_INTERVAL: Final = "token_refresh_interval"  # Token 健康检查间隔（秒）
-DEFAULT_TOKEN_REFRESH_INTERVAL: Final = 1800        # 默认 30 分钟
+# Token 健康检查间隔（秒）。实测 access_token 寿命仅 899 秒，
+# 默认取 900 秒使其同时充当保活与失效探测（取值须落在 TOKEN_REFRESH_INTERVAL_* 之间）。
+DEFAULT_TOKEN_REFRESH_INTERVAL: Final = 900
 
 # scan_interval 允许取值范围（秒）
 SCAN_INTERVAL_MIN: Final = 60
@@ -44,17 +46,26 @@ CLIENT_ID: Final = "db196d62f7d211e8a9b2fa163e955d28"
 # resultCode values that mean "token invalid / expired"
 AUTH_ERROR_CODES: Final = {"20001", "40058"}
 
-# --- Token 刷新（平台级 oauth，城市间通用） ---
-# 刷新端点位于共享 oauth 服务（与杭州/马鞍山业务 host 解耦）。
-OAUTH_REFRESH_URL: Final = (
-    "https://weixin.towngasvcc.com/vcc-oauth/oauth/authorize2/refreshToken"
-)
-# 签名盐：MD5(排序的 key+value 拼接 + 本盐) 后转大写。平台级，城市通用。
-SIGN_SALT: Final = "hbasesoft.com-prod"
-# 当 expires_in 缺失时的兜底值（秒）。
-DEFAULT_TOKEN_EXPIRES_IN: Final = 7200
-# 在 token 真正过期前多少秒提前刷新，避免临界窗口内请求失败。
-TOKEN_EXPIRY_BUFFER_SECS: Final = 120
+# --- Token 刷新（城市级标准 OAuth2，与业务接口同 host） ---
+# 逆向自营业厅前端 JS（/js/app_*.js）：登录走 login.towngasvcc.com/oauth/authorize，
+# 而 code/refresh_token 换发走**业务 host 自己**的 /openapi/uv1/oauth/token。
+# 之前误用 weixin.towngasvcc.com/vcc-oauth（微信小程序那套 oauth），
+# 它与营业厅 client_id 不互通，刷新恒定返回 90143 → 这就是反复 reauth 的根因。
+OAUTH_TOKEN_PATH: Final = "/openapi/uv1/oauth/token"
+# 标准 OAuth2 参数（前端 getToken 里写死的取值）
+OAUTH_GRANT_TYPE_REFRESH: Final = "refresh_token"
+OAUTH_SCOPE: Final = "read write"
+# redirect_uri 只做非空校验，服务端不比对；用营业厅首页即可。
+OAUTH_REDIRECT_URI_PATH: Final = "/h5-gas/"
+# 实测：马鞍山 access_token 有效期仅 899 秒（约 15 分钟），且 refresh_token 不轮换
+# （可永久复用）。因此必须高频主动续期，且每次请求前都要保证 token 新鲜。
+DEFAULT_TOKEN_EXPIRES_IN: Final = 899
+# 剩余寿命低于此秒数即主动刷新。取 300 秒（15 分钟寿命的 1/3），
+# 保证即使网络抖动重试也来得及。
+TOKEN_EXPIRY_BUFFER_SECS: Final = 300
+
+# 接口码（前端 ajax 里的 code 字段）
+CODE_OAUTH_TOKEN: Final = 1502
 
 USER_AGENT: Final = "Mozilla/5.0"
 

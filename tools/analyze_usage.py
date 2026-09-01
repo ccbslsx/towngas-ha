@@ -45,10 +45,14 @@ from typing import Any
 # 接口常量（与 custom_components/towngas/api.py 保持一致）
 # ---------------------------------------------------------------------------
 CLIENT_ID = "db196d62f7d211e8a9b2fa163e955d28"  # 与集成 const.py 保持一致
-CODE_QUERY_BIND_SUBS = 3505
+CODE_QUERY_BIND_SUBS = 3529
 CODE_QUERY_BILLS = 3516
-OAUTH_REFRESH_URL = "https://weixin.towngasvcc.com/vcc-oauth/oauth/authorize2/refreshToken"
-SIGN_SALT = "hbasesoft.com-prod"
+# 刷新端点：城市业务 host 上的标准 OAuth2（与集成 const.py 一致）。
+# ⚠️ 不要用 weixin.towngasvcc.com/vcc-oauth —— 那是微信小程序那套 oauth，
+#    与营业厅 client_id 不互通，刷新恒定返回 90143。
+OAUTH_TOKEN_PATH = "/openapi/uv1/oauth/token"
+CODE_OAUTH_TOKEN = 1502
+OAUTH_SCOPE = "read write"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -115,13 +119,31 @@ class TownGasStatsClient:
 
     def get_bound_subs(self) -> list[dict[str, Any]]:
         path = "/openapi/uv1/user/queryBindSubsLimitServer"
-        url = (f"{self.base_url}{path}?seq={_build_seq(CODE_QUERY_BIND_SUBS)}"
-               f"&token={self.token}&client_id={CLIENT_ID}&isPayOrReport=Y")
-        data = _http_get_json(url)
-        rc = data.get("resultCode")
-        if rc is not None and str(rc) != "0":
-            raise RuntimeError(f"queryBindSubs 失败 resultCode={rc}: {data.get('resultMsg')}")
-        return data.get("datas") or []
+        for attempt in range(2):
+            url = (f"{self.base_url}{path}?seq={_build_seq(CODE_QUERY_BIND_SUBS)}"
+                   f"&token={self.token}&client_id={CLIENT_ID}&isPayOrReport=Y")
+            data = _http_get_json(url)
+            rc = data.get("resultCode")
+            if rc is not None and str(rc) != "0":
+                # token 过期 -> 刷新后重试一次
+                if str(rc) in ("20001", "40058") and self.refresh_token and attempt == 0:
+                    if self._try_refresh():
+                        continue
+                raise RuntimeError(
+                    f"queryBindSubs 失败 resultCode={rc}: {data.get('resultMsg')}"
+                )
+            return data.get("datas") or []
+        return []
+
+    def ensure_token(self) -> None:
+        """开局先续期一次。
+
+        access_token 实测寿命仅约 15 分钟，而从营业厅复制 token 到运行脚本
+        往往已过去更久，所以必须在拉取数据之前先换发一个新 token，
+        否则第一次请求就会因 20001 失败。
+        """
+        if self.refresh_token:
+            self._try_refresh()
 
     def get_bills(self, subs_code: str, org_code: str) -> list[dict[str, Any]]:
         """分页拉取全部历史账单，返回按账期升序排列的列表。"""
@@ -151,25 +173,35 @@ class TownGasStatsClient:
         return all_bills
 
     def _try_refresh(self) -> bool:
+        """用 refresh_token 换新 access_token（城市级标准 OAuth2 端点）。"""
         if not self.refresh_token:
             return False
-        ts = int(time.time() * 1000)
-        params = {"timestamp": ts, "refreshToken": self.refresh_token}
-        params["sign"] = _sign(params)
-        url = f"{OAUTH_REFRESH_URL}?{urllib.parse.urlencode(params)}"
+        params = {
+            "seq": _build_seq(CODE_OAUTH_TOKEN),
+            "client_id": CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "scope": OAUTH_SCOPE,
+            "redirect_uri": f"{self.base_url}/h5-gas/",
+        }
+        url = f"{self.base_url}{OAUTH_TOKEN_PATH}?{urllib.parse.urlencode(params)}"
         try:
-            data = _http_post_json(url, {})
+            data = _http_get_json(url)
         except Exception as e:  # noqa: BLE001
             print(f"[warn] token 刷新请求失败: {e}", file=sys.stderr)
             return False
-        payload = data.get("datas") if isinstance(data.get("datas"), dict) else data
-        new_access = (payload or {}).get("access_token")
-        if not new_access or new_access == self.token:
-            print(f"[warn] token 刷新返回异常: {data}", file=sys.stderr)
+        new_access = (data or {}).get("access_token")
+        if not new_access:
+            rc = (data or {}).get("resultCode")
+            print(
+                f"[warn] token 刷新失败 resultCode={rc} "
+                f"{ (data or {}).get('resultMsg', '') }",
+                file=sys.stderr,
+            )
             return False
+        if (data or {}).get("refresh_token"):
+            self.refresh_token = data["refresh_token"]
         self.token = new_access
-        if (payload or {}).get("refresh_token"):
-            self.refresh_token = payload["refresh_token"]
         print("[ok] access_token 已刷新，继续拉取", file=sys.stderr)
         return True
 
@@ -516,6 +548,9 @@ def main() -> int:
             return 2
         client = TownGasStatsClient(args.base_url, args.token, args.refresh_token)
         try:
+            # access_token 寿命仅约 15 分钟，先续期再取数
+            client.ensure_token()
+
             if args.subs_code and args.org_code:
                 subs_code, org_code = args.subs_code, args.org_code
             else:
