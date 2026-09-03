@@ -30,11 +30,22 @@ views:
     path: towngas
     icon: mdi:gas-cylinder
     badges: []
-    # 关键开关：关掉 panel 模式（默认会居中+左右留白），切到 grid 布局铺满整屏宽度
+    # ============================================================
+    # 【铺满整屏宽度的两个开关 · 必须成对出现】
+    # 1) panel: false —— 关掉 panel 模式（默认居中 + max-width 留白）
+    # 2) layout.grid-template-columns: 1fr —— 覆盖 HA 默认的
+    #    repeat(auto-fill, minmax(300px, auto))。那个默认规则会在宽屏下
+    #    切出很多列，而顶层只有 1 个 vertical-stack → 只占第 1 列（约 300px），
+    #    于是看起来缩在中间、左右大留白。改成 1fr = 单列且拉伸铺满。
+    # 注意：layout 只有在 panel: false 时才会生效。
+    # ============================================================
     panel: false
+    layout:
+      grid-template-columns: 1fr
+      grid-template-rows: auto
     cards:
 
-      # ---------- 顶层垂直栈（强制 1 列布局 · 解决 panel 模式自动 2 列造成的左右不对称） ----------
+      # ---------- 顶层垂直栈（兜底：保证单列堆叠） ----------
       - type: vertical-stack
         cards:
 
