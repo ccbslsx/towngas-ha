@@ -44,29 +44,40 @@ views:
           所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
           月度柱状图即为 **历史比对**；最小/平均/最大折线为 **统计分析**。
 
-      # ---------- 概览（自动发现全部户号，无需逐个写实体 id） ----------
-      - type: custom:auto-entities
-        card:
-          type: glance
-          title: 各户号实时概览
-          columns: 4
-          show_state: true
-          show_name: true
-        filter:
-          include:
-            - entity_id: "/^sensor\\.gang_hua_ran_qi_.*_(ben_qi_yong_qi|ben_qi_zhang_dan_jin_e|zhang_hu_yu_e|qian_fei_jin_e|zhang_qi|yong_qi_dan_jia|ben_qi_biao_shu|shang_qi_biao_shu)$/"
-              options: {}
+      # ---------- 概览（每个户号一张 glance，无 HACS 依赖） ----------
+      - type: glance
+        title: 概览 · 1500185660
+        columns: 4
+        show_state: true
+        entities:
+          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+          - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+          - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
+      - type: glance
+        title: 概览 · 1500185695
+        columns: 4
+        show_state: true
+        entities:
+          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+          - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+          - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
 
       # ---------- 用气量与累计表数趋势（折线 + 柱） ----------
       - type: custom:apexcharts-card
-        graph_span: 24
+        graph_span: "13month"
         header:
           show: true
           title: 用气量与累计表数趋势
-        show:
-          last: 13mo
-        span:
-          start: month
         series:
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
             name: 累计表数 1500185660
@@ -89,12 +100,10 @@ views:
 
       # ---------- 月度用气对比（历史比对核心） ----------
       - type: custom:apexcharts-card
-        graph_span: 24
+        graph_span: "13month"
         header:
           show: true
           title: 月度用气对比（历史比对）
-        show:
-          last: 13mo
         series:
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
             name: 1500185660
@@ -113,12 +122,10 @@ views:
 
       # ---------- 账单金额趋势 ----------
       - type: custom:apexcharts-card
-        graph_span: 24
+        graph_span: "13month"
         header:
           show: true
           title: 账单金额趋势（¥）
-        show:
-          last: 13mo
         series:
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
             name: 账单 1500185660
@@ -147,12 +154,10 @@ views:
 
       # ---------- 账户余额与欠费 ----------
       - type: custom:apexcharts-card
-        graph_span: 24
+        graph_span: "13month"
         header:
           show: true
           title: 账户余额与欠费（¥）
-        show:
-          last: 13mo
         series:
           - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
             name: 余额 1500185660
