@@ -109,6 +109,18 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         except TownGasApiError as err:
             _LOGGER.warning("获取账单列表失败 %s: %s", subs_code, err)
 
+        # 1b. 本期表数兜底：vcc-cbs 的 queryHistoryFee 可能不含 currReading，
+        #     用 charge/preCheck 单独取一次并补进最新一条账单（传感器据此出表数）。
+        bills = result.get("bills") or []
+        if bills and not bills[0].get("currReading"):
+            try:
+                reading = await self.client.async_get_reading(subs_code, org_code)
+                if reading:
+                    bills[0].setdefault("currReading", reading.get("currReading"))
+                    bills[0].setdefault("lastReading", reading.get("lastReading"))
+            except TownGasApiError as err:
+                _LOGGER.debug("获取表数失败 %s: %s", subs_code, err)
+
         # 2. Account balance
         try:
             result["balance"] = await self.client.async_get_balance(
@@ -119,25 +131,18 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         except TownGasApiError as err:
             _LOGGER.warning("获取余额失败 %s: %s", subs_code, err)
 
-        # 3. Arrears (欠费) - preferred source
-        try:
-            unpaid = await self.client.async_get_unpaid(subs_code, org_code)
-            raw_arrears = _to_float(unpaid.get("totalUnpaidFee"))
-            # 无欠费时接口返回空字符串 "", 视为 0; 金额单位为「分」需 ÷100
-            arrears = (raw_arrears if raw_arrears is not None else 0.0) / 100.0
-            arrears = round(arrears, 2)
-            unpaid_datas = unpaid.get("datas") or []
-            if not unpaid_datas:
-                # 兜底: 从账单列表里找未结清的
-                unpaid_datas = [
-                    b for b in result["bills"] if _to_float(b.get("totalUnpaidFee"))
-                ]
-            result["arrears"] = arrears
-            result["unpaid_count"] = len(unpaid_datas)
-        except TownGasAuthError:
-            raise
-        except TownGasApiError as err:
-            _LOGGER.warning("获取欠费信息失败 %s: %s", subs_code, err)
+        # 3. Arrears (欠费) — v1.5.0 改为直接从账单列表推导
+        #    （历史账单里每条都带 totalUnpaidFee，累计未结清即为欠费）。
+        #    单位待探测确认：营业厅为「分」需 ÷100；vcc-cbs 单位未知，先原值透传，
+        #    探测锁定字段后统一校准。
+        unpaid_datas = [
+            b for b in bills if _to_float(b.get("totalUnpaidFee"))
+        ]
+        raw_arrears = sum(
+            (_to_float(b.get("totalUnpaidFee")) or 0.0) for b in unpaid_datas
+        )
+        result["arrears"] = round(raw_arrears, 2)
+        result["unpaid_count"] = len(unpaid_datas)
 
         # 4. Subscription info (户主/户址) - nice to have
         try:

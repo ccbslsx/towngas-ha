@@ -1,61 +1,73 @@
-"""API client for the Towngas (港华燃气) 网上营业厅 openapi.
+"""API client for the Towngas (港华燃气) WeChat-central VCC gateway.
 
-Reverse engineered from https://maanshan.towngasvcc.com frontend:
+Reverse engineered from the WeChat H5 frontend (weixin.towngasvcc.com/h5-gas)
+and cross-checked against the Hangzhou reference integration
+(palafin02back/hztowngas).
 
-* All data endpoints are GET requests.
-* URL pattern:
-    {base}/openapi/uv1/<path>?seq=<seq>&token=<access_token>&<params...>
-  where seq = zero-padded 5-digit interface code + YYYYMMDDHHmmss + 13 random digits.
-* Response JSON: successful calls return the data payload directly
-  (e.g. ``{"datas": [...], ...}``) WITHOUT a ``resultCode`` key. Only error
-  responses carry a ``resultCode`` (e.g. ``20001`` = access token expired).
-* resultCode 20001 / 40058 mean the token is invalid or expired.
-* Token 刷新走**业务 host 自己的标准 OAuth2 端点**
-  ``{base}/openapi/uv1/oauth/token?grant_type=refresh_token&...``，
-  响应为 ``{"access_token","token_type","refresh_token","expires_in","scope"}``。
-  实测马鞍山：access_token 寿命仅 899 秒，refresh_token **不轮换**（可永久复用）。
-  ⚠️ 不要使用 weixin.towngasvcc.com/vcc-oauth（微信小程序那套 oauth），
-  它与营业厅的 client_id 不互通，刷新恒定返回 90143「refreshToken已失效」。
+v1.5.0 — switched from the 网上营业厅 openapi gateway to the WeChat-central
+VCC gateway to fix the "token expires every few days" problem:
+
+* Auth uses the WeChat OAuth (``/vcc-oauth/oauth/authorize2/...``):
+    - login link: ``union?clientid=...&redirectUri=...``  (open in WeChat)
+    - exchange:    ``POST accessToekn?authCode=<code>``      → access+refresh
+    - refresh:     ``POST refreshToken?timestamp=&refreshToken=&sign=``
+      where ``sign = MD5(sorted("k{v}") + SALT).upper()`` with
+      ``SALT = "hbasesoft.com-prod"``.
+  access_token lives 7200s; refresh_token survives days (user-proven 1+ week).
+* Business calls hit ``{host}/nv1/vcc-cbs/<path>`` (GET), authenticated with
+  ``Authorization: Bearer <access_token>`` plus the same ``timestamp``+``sign``
+  signature. A 401 triggers one refresh+retry (mirrors the Hangzhou 401 fix).
+
+The central gateway does NOT share tokens with the 营业厅 gateway, so both the
+auth layer and the data layer move here together.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
-import random
 import time
-from datetime import datetime
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
 
 from .const import (
-    AUTH_ERROR_CODES,
-    CLIENT_ID,
-    CODE_OAUTH_TOKEN,
     DEFAULT_TOKEN_EXPIRES_IN,
-    LOGGER,
-    OAUTH_CODE2TOKEN_PATH,
-    OAUTH_CODE_PARAM,
-    OAUTH_GRANT_TYPE_REFRESH,
-    OAUTH_REDIRECT_URI_PATH,
-    OAUTH_SCOPE,
-    OAUTH_TOKEN_PATH,
     TOKEN_EXPIRY_BUFFER_SECS,
     USER_AGENT,
+    WECHAT_API_PATH,
+    WECHAT_APPID,
+    WECHAT_CLIENT_ID,
+    WECHAT_HOST,
+    WECHAT_OAUTH_PATH,
+    WECHAT_REDIRECT_URI,
+    WECHAT_SIGN_SALT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Interface codes (from the frontend service modules)
-CODE_QUERY_SUBS = 3505
-CODE_QUERY_BILLS = 3516
-CODE_QUERY_ACCT_RES = 3509
-CODE_QUERY_UNPAID_BILLS = 3514
-CODE_QUERY_LAST_READINGS = 3511
-CODE_QUERY_BIND_SUBS = 3529
+# resultCode values that mean "token invalid / expired" (carried in JSON body).
+AUTH_ERROR_CODES = {"20001", "40058"}
+
+
+# ---------------------------------------------------------------------------
+# Signature helpers (WeChat-central gateway)
+# ---------------------------------------------------------------------------
+def _md5(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+def _sign(params: dict[str, Any]) -> str:
+    """MD5 of sorted key+value pairs concatenated, plus SALT, uppercased."""
+    keys = sorted(
+        k for k, v in params.items()
+        if k != "sign" and v is not None and v != ""
+    )
+    raw = "".join(f"{k}{params[k]}" for k in keys)
+    return _md5(raw + WECHAT_SIGN_SALT).upper()
 
 
 class TownGasAuthError(Exception):
@@ -79,8 +91,7 @@ class TokenStore:
         self.refresh_token = refresh_token
         # epoch 秒；0 = 未知（退化为被动刷新）
         self.expires_at = float(expires_at or 0.0)
-        # 最近一次刷新失败的原因（成功时置 None）。用于在界面/服务调用里
-        # 暴露刷新到底为什么失败，避免用户只看到"又过期了"而无从排查。
+        # 最近一次刷新失败的原因（成功时置 None）。
         self.last_refresh_error: str | None = None
 
     def is_near_expiry(self, buffer: int = TOKEN_EXPIRY_BUFFER_SECS) -> bool:
@@ -90,17 +101,8 @@ class TokenStore:
         return (self.expires_at - buffer) <= time.time()
 
 
-def _build_seq(code: int) -> str:
-    """seq = 5-digit zero padded code + timestamp + 13 random digits."""
-    return (
-        f"{code:05d}"
-        + datetime.now().strftime("%Y%m%d%H%M%S")
-        + f"{random.randint(0, 10**13 - 1):013d}"
-    )
-
-
 class TownGasApiClient:
-    """Thin async client around the 网上营业厅 openapi."""
+    """Async client around the WeChat-central VCC gateway."""
 
     def __init__(
         self,
@@ -109,282 +111,94 @@ class TownGasApiClient:
         token_store: TokenStore,
     ) -> None:
         self._session = session
-        self._base_url = base_url.rstrip("/")
+        self._base_url = (base_url or f"https://{WECHAT_HOST}").rstrip("/")
         self.tokens = token_store
 
     # ------------------------------------------------------------------
-    def _build_url(
-        self,
-        code: int,
-        path: str,
-        params: dict[str, Any] | None = None,
-        *,
-        authenticated: bool = True,
-    ) -> str:
-        url = f"{self._base_url}{path}"
-        url += f"?seq={_build_seq(code)}"
-        if authenticated:
-            url += f"&token={self.tokens.access_token}"
-        url += f"&client_id={CLIENT_ID}"
-        if params:
-            clean = {k: v for k, v in params.items() if v is not None}
-            if clean:
-                # 必须做 URL 编码：oauth 端点的 scope 值为 "read write"（含空格），
-                # 直接拼进 URL 会产生非法 URL（http.client / aiohttp 均会拒绝）。
-                url += "&" + urlencode(clean)
-        return url
-
-    async def _get(
-        self,
-        code: int,
-        path: str,
-        params: dict[str, Any] | None = None,
-        *,
-        authenticated: bool = True,
-        _retried: bool = False,
-    ) -> dict[str, Any]:
-        url = self._build_url(code, path, params, authenticated=authenticated)
-        _LOGGER.debug("GET %s", url)
-        try:
-            async with self._session.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json(content_type=None)
-        except aiohttp.ClientResponseError as err:
-            raise TownGasApiError(
-                f"服务器返回 HTTP {err.status}: {err.message}"
-            ) from err
-        except (TimeoutError, asyncio.TimeoutError) as err:
-            raise TownGasApiError("连接港华燃气服务器超时") from err
-        except aiohttp.ClientError as err:
-            raise TownGasApiError(f"网络错误: {err}") from err
-        except json.JSONDecodeError as err:
-            raise TownGasApiError("服务器返回了无法解析的数据") from err
-
-        # The API only attaches ``resultCode`` on *error* responses. Successful
-        # responses return the payload directly (no resultCode key at all).
-        # So we must NOT require resultCode == "0" — doing so rejects every
-        # valid response and surfaces a misleading "cannot connect" error.
-        result_code = data.get("resultCode")
-        if result_code is not None:
-            rc = str(result_code)
-            if rc in AUTH_ERROR_CODES:
-                # 鉴权失败（如 20001 token 过期）：先用 refresh_token 换发新
-                # access_token，成功则就地用新 token 重发本次请求（参考杭州版
-                # 「401 后用全新时间戳/签名重签 URL 重试」的关键修复）。仅重试
-                # 一次，避免死循环；仍鉴权失败才上抛，由上层触发 reauth。
-                if not _retried and await self.async_try_refresh_token():
-                    return await self._get(
-                        code, path, params,
-                        authenticated=authenticated, _retried=True,
-                    )
-                raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
-            if rc != "0":
-                raise TownGasApiError(
-                    f"接口错误 {rc}: {data.get('resultMsg', '')}"
-                )
-        return data
-
+    # OAuth helpers
     # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    async def async_validate_token(self) -> list[dict[str, Any]]:
-        """Validate the token and return the list of bound subscriptions."""
-        return await self.async_get_bound_subs()
-
-    async def async_get_bound_subs(self) -> list[dict[str, Any]]:
-        """Get subscriptions bound to this account (户号管理)."""
-        data = await self._get(
-            CODE_QUERY_BIND_SUBS,
-            "/openapi/uv1/user/queryBindSubsLimitServer",
-            {"isPayOrReport": "Y"},
-        )
-        return data.get("datas") or []
-
-    async def async_get_sub_info(
-        self, subs_code: str, org_code: str
-    ) -> dict[str, Any]:
-        """Get subscription (气户) info: name / address / org."""
-        data = await self._get(
-            CODE_QUERY_SUBS,
-            "/openapi/uv1/subs/querySubs",
-            {"subsCode": subs_code, "orgCode": org_code},
-        )
-        datas = data.get("datas") or []
-        return datas[0] if datas else {}
-
-    async def async_get_bills(
-        self,
-        subs_code: str,
-        org_code: str,
-        page_index: int = 1,
-        page_size: int = 24,
-    ) -> list[dict[str, Any]]:
-        """Get bill history (历史账单), newest first."""
-        data = await self._get(
-            CODE_QUERY_BILLS,
-            "/openapi/uv1/bill/queryBills",
-            {
-                "subsCode": subs_code,
-                "orgCode": org_code,
-                "pageIndex": page_index,
-                "pageSize": page_size,
-            },
-        )
-        bills = data.get("datas") or []
-        # Defensive: make sure newest first.
-        try:
-            bills.sort(key=lambda b: str(b.get("yrMonth", "")), reverse=True)
-        except TypeError:  # pragma: no cover
-            pass
-        return bills
-
-    async def async_get_balance(self, subs_code: str, org_code: str) -> float | None:
-        """Get account balance (账户余额 / 气费余额)."""
-        data = await self._get(
-            CODE_QUERY_ACCT_RES,
-            "/openapi/uv1/acct/queryAcctRes",
-            {"subsCode": subs_code, "orgCode": org_code, "acctResType": 2},
-        )
-        datas = data.get("datas") or []
-        if datas:
-            try:
-                # 接口余额单位为「分」，转换为「元」
-                return round(float(datas[0].get("balance")) / 100.0, 2)
-            except (TypeError, ValueError):
-                return None
-        return None
-
-    async def async_get_unpaid(
-        self, subs_code: str, org_code: str
-    ) -> dict[str, Any]:
-        """Get unpaid bill summary (欠费)."""
-        return await self._get(
-            CODE_QUERY_UNPAID_BILLS,
-            "/openapi/uv1/bill/queryUnpaidBills",
-            {"subsCode": subs_code, "orgCode": org_code},
+    def get_oauth_url(self) -> str:
+        """Return the WeChat OAuth login URL (open in WeChat to scan/log in)."""
+        ru = quote(WECHAT_REDIRECT_URI, safe="")
+        return (
+            f"{self._base_url}{WECHAT_OAUTH_PATH}/oauth/authorize2/union"
+            f"?clientid={WECHAT_CLIENT_ID}&redirectUri={ru}"
         )
 
-    async def async_try_refresh_token(self) -> bool:
-        """Use refresh_token to obtain a fresh access_token (平台级 oauth).
+    async def async_exchange_auth_code(self, auth_code: str) -> bool:
+        """Exchange a WeChat login ``authCode`` for access+refresh tokens.
 
-        Returns True and updates the token store (access_token /
-        refresh_token / expires_at) on success. On failure returns False —
-        the caller should then fall back to reauth.
+        Returns True and updates the token store on success. On failure sets
+        ``last_refresh_error`` and returns False (caller should show reauth).
         """
-        refresh_token = self.tokens.refresh_token
-        if not refresh_token:
-            self.tokens.last_refresh_error = (
-                "未保存 refresh_token（粘贴内容里没有 refresh_token 字段）"
-            )
-            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
+        if not auth_code:
+            self.tokens.last_refresh_error = "未提供 authCode（微信登录后回跳地址里的 code 参数）"
             return False
-
-        # 城市级标准 OAuth2 端点：{业务host}/openapi/uv1/oauth/token
-        # 实测有效，且 refresh_token 不轮换（可永久复用）。
-        redirect_uri = f"{self._base_url}{OAUTH_REDIRECT_URI_PATH}"
-        url = self._build_url(
-            CODE_OAUTH_TOKEN,
-            OAUTH_TOKEN_PATH,
-            {
-                "grant_type": OAUTH_GRANT_TYPE_REFRESH,
-                "refresh_token": refresh_token,
-                "scope": OAUTH_SCOPE,
-                "redirect_uri": redirect_uri,
-            },
-            authenticated=False,
+        url = (
+            f"{self._base_url}{WECHAT_OAUTH_PATH}/oauth/authorize2/accessToekn"
+            f"?authCode={quote(auth_code, safe='')}"
         )
-
         try:
-            async with self._session.get(
-                url,
-                headers={"User-Agent": USER_AGENT},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json(content_type=None)
-        except aiohttp.ClientResponseError as err:
-            self.tokens.last_refresh_error = f"刷新端点返回 HTTP {err.status}"
-            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
-            return False
-        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError) as err:
-            self.tokens.last_refresh_error = f"网络错误：{err}"
-            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
-            return False
-
-        # 成功响应形如 {"access_token","token_type","refresh_token","expires_in",
-        # "scope"}，不带 resultCode；只有错误响应才带 resultCode。
-        new_access = data.get("access_token") if isinstance(data, dict) else None
-        if not new_access:
-            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
-            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
-            if rc:
-                self.tokens.last_refresh_error = (
-                    f"服务端拒绝 resultCode={rc} {msg}".strip()
-                )
-            else:
-                self.tokens.last_refresh_error = f"响应异常：{str(data)[:120]}"
-            LOGGER.warning("Token 刷新失败：%s", self.tokens.last_refresh_error)
-            return False
-
-        # 注意：token 尚未到期时刷新，服务端可能原样返回同一个 access_token。
-        # 旧实现据此判为失败，导致 expires_at 一直是 0、is_near_expiry() 永远
-        # 为 False，主动续期机制等于被禁用，只能等 token 真正过期后被动刷新。
-        # 这里放宽：只要服务端正常响应就采信，并更新 expires_at。
-        rotated = new_access != self.tokens.access_token
-        self.tokens.access_token = new_access
-        if data.get("refresh_token"):
-            self.tokens.refresh_token = data["refresh_token"]
-        expires_in = int(data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
-        self.tokens.expires_at = time.time() + expires_in
-        self.tokens.last_refresh_error = None
-        LOGGER.info(
-            "Towngas access token 已刷新，有效期 %s 秒（%s）",
-            expires_in,
-            "换发新 token" if rotated else "复用原 token",
-        )
-        return True
-
-    async def async_exchange_token_code(self, token_code: str) -> bool:
-        """用营业厅登录后浏览器重定向带回的 tokenCode 换发 access_token + refresh_token。
-
-        对应营业厅前端 ``weboauth2Code2Token`` 端点（登录成功 → ``/loginRedirect?...&
-        tokenCode=XXX`` → 调此端点）。返回 True 并更新 token store（access_token /
-        refresh_token / expires_at）；失败返回 False（调用方应回退到 reauth 提示）。
-
-        响应结构与 refresh 端点一致：``{"access_token","token_type",
-        "refresh_token","expires_in","scope"}``，不带 resultCode。
-        """
-        if not token_code:
-            self.tokens.last_refresh_error = "未提供 tokenCode（登录后地址栏里的 tokenCode 参数）"
-            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
-            return False
-
-        url = self._build_url(
-            CODE_OAUTH_TOKEN,
-            OAUTH_CODE2TOKEN_PATH,
-            {OAUTH_CODE_PARAM: token_code},
-            authenticated=False,
-        )
-
-        try:
-            async with self._session.get(
-                url,
-                headers={"User-Agent": USER_AGENT},
+            async with self._session.post(
+                url, headers={"User-Agent": USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
         except aiohttp.ClientResponseError as err:
             self.tokens.last_refresh_error = f"换发端点返回 HTTP {err.status}"
-            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
             return False
-        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError) as err:
+        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError, asyncio.TimeoutError) as err:
             self.tokens.last_refresh_error = f"网络错误：{err}"
-            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
+            return False
+
+        new_access = data.get("access_token") if isinstance(data, dict) else None
+        if not new_access:
+            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
+            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
+            self.tokens.last_refresh_error = (
+                f"服务端拒绝 resultCode={rc} {msg}".strip() or "响应异常"
+            )
+            return False
+
+        self.tokens.access_token = new_access
+        if data.get("refresh_token"):
+            self.tokens.refresh_token = data["refresh_token"]
+        self.tokens.expires_at = time.time() + int(
+            data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN
+        )
+        self.tokens.last_refresh_error = None
+        _LOGGER.info("微信 OAuth 换发成功，有效期 %s 秒", data.get("expires_in"))
+        return True
+
+    async def async_try_refresh_token(self) -> bool:
+        """Use refresh_token to obtain a fresh access_token (WeChat OAuth).
+
+        Returns True and updates the token store on success.
+        """
+        refresh_token = self.tokens.refresh_token
+        if not refresh_token:
+            self.tokens.last_refresh_error = "未保存 refresh_token（粘贴内容里没有 refresh_token 字段）"
+            return False
+
+        ts = int(time.time() * 1000)
+        sign = _sign({"timestamp": ts, "refreshToken": refresh_token})
+        url = (
+            f"{self._base_url}{WECHAT_OAUTH_PATH}/oauth/authorize2/refreshToken"
+            f"?timestamp={ts}&refreshToken={quote(refresh_token, safe='')}&sign={sign}"
+        )
+        try:
+            async with self._session.post(
+                url, headers={"User-Agent": USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except aiohttp.ClientResponseError as err:
+            self.tokens.last_refresh_error = f"刷新端点返回 HTTP {err.status}"
+            return False
+        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError, asyncio.TimeoutError) as err:
+            self.tokens.last_refresh_error = f"网络错误：{err}"
             return False
 
         new_access = data.get("access_token") if isinstance(data, dict) else None
@@ -392,38 +206,23 @@ class TownGasApiClient:
             rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
             msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
             if rc:
-                self.tokens.last_refresh_error = (
-                    f"服务端拒绝 resultCode={rc} {msg}".strip()
-                )
+                self.tokens.last_refresh_error = f"服务端拒绝 resultCode={rc} {msg}".strip()
             else:
                 self.tokens.last_refresh_error = f"响应异常：{str(data)[:120]}"
-            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
             return False
 
         self.tokens.access_token = new_access
         if data.get("refresh_token"):
             self.tokens.refresh_token = data["refresh_token"]
-        expires_in = int(data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
-        self.tokens.expires_at = time.time() + expires_in
-        self.tokens.last_refresh_error = None
-        LOGGER.info(
-            "tokenCode 换发成功，有效期 %s 秒",
-            expires_in,
+        self.tokens.expires_at = time.time() + int(
+            data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN
         )
+        self.tokens.last_refresh_error = None
+        _LOGGER.info("微信 OAuth token 已刷新，有效期 %s 秒", data.get("expires_in"))
         return True
 
     async def async_refresh_if_near_expiry(self) -> bool:
-        """临近过期时主动刷新；返回是否真的发起了刷新。
-
-        借鉴杭州项目的 ensure_token 思路：在真正发业务请求之前先续期，
-        避免把请求打在已经过期的 token 上。
-
-        两种情况下会刷新：
-        1. 已知过期时间且临近过期（剩余寿命 < TOKEN_EXPIRY_BUFFER_SECS）；
-        2. 过期时间未知（expires_at == 0，例如首次启动或旧配置升级）——
-           此时不能假设 token 还新鲜，必须显式续期，否则会带着已过期的
-           token 去请求。
-        """
+        """临近过期时主动刷新；返回是否真的发起了刷新。"""
         if not self.tokens.expires_at or self.tokens.is_near_expiry():
             return await self.async_try_refresh_token()
         return False
@@ -435,3 +234,211 @@ class TownGasApiClient:
         if self.tokens.is_near_expiry():
             return await self.async_try_refresh_token()
         return True
+
+    # ------------------------------------------------------------------
+    # Signed business calls on /nv1/vcc-cbs/*
+    # ------------------------------------------------------------------
+    async def _cbs_get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        _retried: bool = False,
+    ) -> dict[str, Any]:
+        """Signed GET on the WeChat-central VCC gateway.
+
+        Attaches ``Authorization: Bearer <access_token>`` and a ``timestamp``+
+        ``sign`` signature. On HTTP 401 (or a resultCode auth error) refreshes
+        once and retries with a fresh token/sign.
+        """
+        if not await self.async_ensure_token():
+            raise TownGasAuthError("无可用 access_token，且 refresh 失败")
+
+        ts = int(time.time() * 1000)
+        all_params: dict[str, Any] = {**(params or {}), "timestamp": ts}
+        all_params["sign"] = _sign(all_params)
+        url = f"{self._base_url}{WECHAT_API_PATH}{path}?{urlencode(all_params)}"
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Authorization": f"Bearer {self.tokens.access_token}",
+        }
+        _LOGGER.debug("CBS GET %s", path)
+        try:
+            async with self._session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                body = await resp.text()
+        except (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError) as err:
+            raise TownGasApiError(f"网络错误: {err}") from err
+
+        if resp.status == 401:
+            if not _retried and await self.async_try_refresh_token():
+                return await self._cbs_get(path, params, _retried=True)
+            raise TownGasAuthError("access_token 过期且 refresh 失败")
+
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            data = {}
+
+        result_code = data.get("resultCode") if isinstance(data, dict) else None
+        if result_code is not None and str(result_code) in AUTH_ERROR_CODES:
+            if not _retried and await self.async_try_refresh_token():
+                return await self._cbs_get(path, params, _retried=True)
+            raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
+        return data if isinstance(data, dict) else {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    async def async_validate_token(self) -> list[dict[str, Any]]:
+        """Validate the token and return the list of bound subscriptions."""
+        return await self.async_get_bound_subs()
+
+    async def async_get_bound_subs(self) -> list[dict[str, Any]]:
+        """户号管理：返回本账户绑定的户号列表（已归一化为 subsCode/orgCode）。"""
+        data = await self._cbs_get("/usersubs/queryBindList")
+        datas = data.get("datas") or []
+        return [self._norm_subs(s) for s in datas]
+
+    async def async_get_sub_info(
+        self, subs_code: str, org_code: str
+    ) -> dict[str, Any]:
+        """Get subscription (气户) info: name / address / org."""
+        data = await self._cbs_get(
+            "/usersubs/subsDetailByCode",
+            {"subsCode": subs_code, "orgCode": org_code},
+        )
+        datas = data.get("datas") or []
+        return self._norm_subs(datas[0]) if datas else {
+            "subsCode": subs_code, "orgCode": org_code,
+        }
+
+    async def async_get_bills(
+        self,
+        subs_code: str,
+        org_code: str,
+        page_index: int = 1,
+        page_size: int = 24,
+    ) -> list[dict[str, Any]]:
+        """历史账单（charge/queryHistoryFee），归一化为 营业厅字段名。"""
+        data = await self._cbs_get(
+            "/charge/queryHistoryFee",
+            {
+                "subsCode": subs_code,
+                "orgCode": org_code,
+                "pageIndex": page_index,
+                "pageSize": page_size,
+            },
+        )
+        bills = [self._norm_bill(b) for b in (data.get("datas") or [])]
+        try:
+            bills.sort(key=lambda b: str(b.get("yrMonth", "")), reverse=True)
+        except TypeError:
+            pass
+        return bills
+
+    async def async_get_balance(self, subs_code: str, org_code: str) -> float | None:
+        """账户余额（charge/gasFeeBaseinfo）。单位待验证，原值透传。"""
+        data = await self._cbs_get(
+            "/charge/gasFeeBaseinfo",
+            {"subsCode": subs_code, "orgCode": org_code},
+        )
+        datas = data.get("datas") or []
+        info = datas[0] if datas else {}
+        # 余额字段名未完全确认，多候选兜底；单位（分/元）待探测确认。
+        raw = (
+            info.get("balance")
+            or info.get("acctBalance")
+            or info.get("balanceAmt")
+            or info.get("resBalance")
+        )
+        if raw in (None, ""):
+            return None
+        try:
+            return round(float(raw), 2)
+        except (TypeError, ValueError):
+            return None
+
+    async def async_get_unpaid(self, subs_code: str, org_code: str) -> dict[str, Any]:
+        """欠费摘要。v1.5.0 改为从账单列表推导（见 coordinator），此处保留兼容。
+
+        直接返回空结构；coordinator 会基于 bills 计算 arrears / unpaid_count。
+        """
+        return {}
+
+    async def async_get_reading(
+        self, subs_code: str, org_code: str
+    ) -> dict[str, Any] | None:
+        """本期表数（charge/preCheck → currReading）。"""
+        data = await self._cbs_get(
+            "/charge/preCheck", {"subsCode": subs_code, "orgCode": org_code}
+        )
+        datas = data.get("datas") if isinstance(data, dict) else None
+        if not isinstance(datas, dict):
+            return None
+        lst = datas.get("readingRptList") or []
+        if not lst:
+            return None
+        first = lst[0] if isinstance(lst[0], dict) else {}
+        return {"currReading": first.get("currReading"), "lastReading": first.get("lastReading")}
+
+    # ------------------------------------------------------------------
+    # Field normalization（双命名兜底 + 原始字段透传）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _norm_subs(s: dict[str, Any]) -> dict[str, Any]:
+        out = dict(s)
+        out["subsCode"] = s.get("subsCode") or s.get("subsId") or s.get("userSubsCode") or s.get("subCode")
+        out["orgCode"] = s.get("orgCode") or s.get("orgId") or s.get("subOrgCode")
+        out["name"] = s.get("name") or s.get("subsName") or s.get("userName")
+        out["displayAddr"] = (
+            s.get("displayAddr") or s.get("addr")
+            or s.get("subsAddr") or s.get("address") or s.get("subAddr")
+        )
+        out["orgName"] = s.get("orgName") or s.get("orgShortName")
+        return out
+
+    @staticmethod
+    def _norm_bill(b: dict[str, Any]) -> dict[str, Any]:
+        """把 vcc-cbs 账单字段归一化为 营业厅传感器使用的字段名。
+
+        同时**原样透传所有原始字段**（out 先 copy 整条），保证即使下方兜底
+        没命中真实字段名，传感器属性里仍能看到原始数据，便于探测后校准。
+        """
+        out = dict(b)
+        # 账期（YYYYMM）
+        out["yrMonth"] = (
+            b.get("yrMonth") or b.get("billMonth") or b.get("month")
+            or b.get("accountMonth") or b.get("billYm")
+        )
+        # 用气量（m³）
+        out["amount"] = (
+            b.get("amount") or b.get("useGas") or b.get("gasUsage")
+            or b.get("gasAmount")
+        )
+        # 表数
+        out["currReading"] = (
+            b.get("currReading") or b.get("currentReading") or b.get("endReading")
+        )
+        out["lastReading"] = (
+            b.get("lastReading") or b.get("prevReading") or b.get("startReading")
+        )
+        # 金额（营业厅单位为「分」；vcc-cbs 单位待探测确认，原值透传，不在此处换算）
+        out["chrgSum"] = (
+            b.get("chrgSum") or b.get("billFee") or b.get("billAmount")
+            or b.get("chargeSum") or b.get("totalFee") or b.get("amt")
+        )
+        # 欠费金额
+        out["totalUnpaidFee"] = (
+            b.get("totalUnpaidFee") or b.get("unpaidFee") or b.get("oweFee")
+            or b.get("arrearsFee")
+        )
+        # 违约金
+        out["unpaidLateFee"] = b.get("unpaidLateFee") or b.get("lateFee")
+        # 阶梯明细
+        out["stepFeeResults"] = (
+            b.get("stepFeeResults") or b.get("stepList")
+            or b.get("stepFeeList") or b.get("stepRslt") or []
+        )
+        return out

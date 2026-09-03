@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "港华燃气（Towngas）",
-        "description": "方式一（推荐）：打开 {business_hall_url} 登录营业厅，登录后浏览器地址栏会变成类似 …tokenCode=xxxx 的形式，把整段网址复制粘贴到下面，集成会自动用该登录码换发 token。方式二（备用）：登录后按 F12 → 应用 → 本地存储 → 复制键 token 的值（支持整个 JSON 或仅 access_token）。{detail}",
+        "description": "请先在微信中打开登录链接完成授权：\n1. 复制下面的「微信登录链接」，在手机微信里打开；\n2. 微信内登录港华燃气账户，登录成功会自动跳回并带上 ?code= 参数；\n3. 把跳转后地址栏里整段带 ?code= 的网址复制粘贴到下面，集成会自动换发 token。\n\n该 token 本身有效期约 2 小时，但 refresh_token 可稳定多日，集成每 30 分钟自动静默刷新，无需频繁手动操作。{detail}",
         "data": {
-          "access_token": "Access Token / 登录后地址栏里的 tokenCode 网址",
-          "base_url": "营业厅地址"
+          "access_token": "微信登录后地址栏里的 ?code= 网址 / 授权码（或完整 token JSON）",
+          "base_url": "网关地址（一般无需修改）"
         }
       },
       "subs": {
@@ -18,17 +18,17 @@
       },
       "reauth_confirm": {
         "title": "Token 已过期",
-        "description": "token 已过期。推荐方式：打开 {business_hall_url} 登录营业厅，登录后复制地址栏中带 tokenCode= 的整段网址粘贴到下面，集成会自动换发新 token（无需翻 localStorage）。也可粘贴营业厅 localStorage 里键 token 的完整 JSON（需含 refresh_token）。{detail}",
+        "description": "token 已失效。请重新在微信里打开下方登录链接登录，把跳回地址栏里带 ?code= 的整段网址粘贴到下面，集成会自动换发新 token。{detail}",
         "data": {
-          "access_token": "登录后地址栏 tokenCode 网址 / 新的 Token"
+          "access_token": "微信登录后地址栏 ?code= 网址 / 授权码"
         }
       }
     },
     "error": {
       "cannot_connect": "无法连接到港华燃气服务器",
       "invalid_auth": "Token 无效或已过期",
-      "invalid_token_format": "无法解析 token，请粘贴 localStorage 中键为 token 的完整内容",
-      "no_subscriptions": "该账号下没有绑定任何户号，请先在网上营业厅绑定",
+      "invalid_token_format": "无法解析：请粘贴微信登录跳回地址里带 ?code= 的整段网址，或完整的 token JSON",
+      "no_subscriptions": "该账号下没有绑定任何户号，请先在微信/营业厅绑定",
       "no_subscriptions_selected": "请至少选择一个户号"
     },
     "abort": {
@@ -42,14 +42,14 @@
         "description": "每日 23:30–00:30（CST）为港华燃气系统维护窗口，此期间自动跳过数据请求，传感器保持上次读数；Token 健康检查不受影响。",
         "data": {
           "scan_interval": "数据刷新间隔（秒，60-86400，默认 21600）",
-          "token_refresh_interval": "Token 刷新间隔（秒，300-7140，默认 1800）"
+          "token_refresh_interval": "Token 刷新间隔（秒，300-7200，默认 1800）"
         }
       }
     },
     "error": {
       "invalid_number": "请输入整数",
       "scan_out_of_range": "数据刷新间隔需在 60–86400 秒之间",
-      "token_out_of_range": "Token 刷新间隔需在 300–7140 秒之间"
+      "token_out_of_range": "Token 刷新间隔需在 300–7200 秒之间"
     }
   }
 }

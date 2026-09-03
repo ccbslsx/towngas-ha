@@ -1,4 +1,4 @@
-"""Config flow for the Towngas (港华燃气) integration."""
+"""Config flow for the Towngas (港华燃气) integration — v1.5.0 WeChat OAuth."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import voluptuous as vol
 
@@ -24,7 +24,6 @@ from homeassistant.helpers.selector import (
 
 from .api import TokenStore, TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
-    BUSINESS_HALL_URL,
     CONF_ACCESS_TOKEN,
     CONF_BASE_URL,
     CONF_REFRESH_TOKEN,
@@ -40,9 +39,23 @@ from .const import (
     SCAN_INTERVAL_MIN,
     TOKEN_REFRESH_INTERVAL_MAX,
     TOKEN_REFRESH_INTERVAL_MIN,
+    WECHAT_CLIENT_ID,
+    WECHAT_HOST,
+    WECHAT_OAUTH_PATH,
+    WECHAT_REDIRECT_URI,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def wechat_login_url() -> str:
+    """Construct the WeChat OAuth login URL (open in WeChat to scan/log in)."""
+    ru = quote(WECHAT_REDIRECT_URI, safe="")
+    return (
+        f"https://{WECHAT_HOST}{WECHAT_OAUTH_PATH}/oauth/authorize2/union"
+        f"?clientid={WECHAT_CLIENT_ID}&redirectUri={ru}"
+    )
+
 
 STEP_USER_SCHEMA = vol.Schema(
     {
@@ -68,26 +81,70 @@ def _format_detail(err: Exception) -> str:
 
 @callback
 def _async_warn_refresh_unusable(hass, error: str | None) -> None:
-    """Tell the user right away that the pasted refresh_token cannot refresh.
-
-    Without this the problem only surfaces much later, when the access token
-    finally expires and the integration asks for a new token again.
-    """
+    """Tell the user right away that the pasted refresh_token cannot refresh."""
     persistent_notification.async_create(
         hass,
         "新的 access_token 已保存，但**自动刷新测试没有通过**：\n\n"
         f"`{_truncate(error or '未知原因', 300)}`\n\n"
-        "这意味着 token 到期后仍会再次要求你手动粘贴。请确认粘贴的是营业厅 "
-        "localStorage 里 **`token` 键的完整 JSON**（必须包含 `refresh_token` "
-        "字段），而不是只粘了 access_token 字符串。\n\n"
+        "这意味着 token 到期后仍可能再次要求你重新登录。微信 OAuth 正常情况"
+        "下 refresh_token 可稳定多日，请确认粘贴的是微信登录回跳地址里的 "
+        "`?code=`（一次性），或完整的 token JSON（含 refresh_token）。\n\n"
         "可在「开发者工具 → 服务」调用 `towngas.force_refresh_token` 复测。",
         title="港华燃气：token 自动刷新不可用",
         notification_id=f"{DOMAIN}_refresh_unusable",
     )
 
 
-def _parse_token_input(raw: str) -> tuple[str, str | None]:
-    """Accept either a bare access_token or the full localStorage JSON."""
+def _extract_auth_code(raw: str) -> str | None:
+    """从粘贴内容里抽取微信登录授权码（authCode / code）。
+
+    支持形态：
+      * 完整重定向 URL：``https://.../h5-gas/?code=abc`` 或 ``?authCode=abc``
+      * JSON：``{"authCode":"abc"}`` / ``{"code":"abc"}``
+      * 裸授权码字符串
+
+    若内容明显是 token JSON（含 access_token）则返回 None，交由 token-JSON 分支处理。
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    decoded = unquote(raw)
+    # JSON 形态
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            obj = None
+        if obj:
+            if obj.get("access_token"):
+                return None  # 这是 token JSON，走 refresh 分支
+            code = obj.get("authCode") or obj.get("code")
+            if code:
+                return str(code)
+        # JSON 被拷贝损坏：正则兜底
+        m = re.search(r'"(?:authCode|code)"\s*:\s*"([^"]+)"', raw)
+        if m:
+            return m.group(1)
+        return None
+    # URL 形态
+    patterns = [
+        r'[?&]authCode=([^&\s"\'}>]+)',
+        r'[?&]code=([^&\s"\'}>]+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, decoded) or re.search(pat, raw)
+        if m:
+            code = m.group(1).strip().strip('"{}')
+            if code:
+                return code
+    # 裸授权码（非 JSON、不含 token）
+    if "access_token" not in raw and len(raw) < 120:
+        return raw
+    return None
+
+
+def _parse_token_json(raw: str) -> tuple[str, str | None]:
+    """Accept a full token JSON (access_token + optional refresh_token)."""
     raw = raw.strip()
     if raw.startswith("{"):
         try:
@@ -98,7 +155,6 @@ def _parse_token_input(raw: str) -> tuple[str, str | None]:
                 return access, refresh
         except json.JSONDecodeError:
             pass
-        # Maybe the JSON got mangled by copy/paste - try to regex the token out
         m = re.search(r'"access_token"\s*:\s*"([^"]+)"', raw)
         if m:
             r = re.search(r'"refresh_token"\s*:\s*"([^"]+)"', raw)
@@ -107,83 +163,45 @@ def _parse_token_input(raw: str) -> tuple[str, str | None]:
     return raw, None
 
 
-def _extract_token_code(raw: str) -> str | None:
-    """从粘贴内容里抽取营业厅登录后带回的授权码（tokenCode / code）。
-
-    支持三种形态：
-      * 完整重定向 URL：``https://.../h5-gas/?{"tokenCode":"abc"}`` 或 ``?tokenCode=abc``
-      * 含 ``tokenCode`` / ``code`` 参数的任意文本
-      * 裸授权码字符串（本身不含 token JSON 结构）
-
-    返回授权码字符串；若明显是 token JSON / access_token 则返回 None（交由
-    ``_parse_token_input`` 处理，避免误判）。
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    # URL 可能经过编码（?%7B%22tokenCode%22...），先解码再匹配
-    decoded = unquote(raw)
-    patterns = [
-        r'"tokenCode"\s*:\s*"([^"]+)"',          # JSON 形态：{"tokenCode":"abc"}
-        r'[?&]tokenCode=([^&\s"\'}>]+)',          # ?tokenCode=abc
-        r'[?&]code=([^&\s"\'}>]+)',               # ?code=abc（authorization_code 形态）
-    ]
-    for pat in patterns:
-        m = re.search(pat, decoded)
-        if not m:
-            m = re.search(pat, raw)
-        if m:
-            code = m.group(1).strip().strip('"{}')
-            if code:
-                return code
-    return None
-
-
 async def _finalize_tokens(
     hass, base_url: str, raw: str
 ) -> dict[str, Any]:
-    """Validate, then obtain usable tokens from either:
+    """Obtain usable tokens from either:
 
-    1. a pasted **authorization code** (``tokenCode``/``code`` from the
-       business-hall redirect URL after login) — exchanged via
-       ``weboauth2Code2Token``; OR
+    1. a pasted **WeChat auth code** (``code``/``authCode`` from the login
+       redirect URL after scanning/logging in via WeChat) — exchanged via
+       ``accessToekn?authCode=``; OR
     2. a pasted **access_token (+ optional refresh_token)** / full token JSON —
        validated, then proactively refreshed to capture a fresh token + expiry.
 
     Returns a dict with access_token / refresh_token / token_expires_at /
-    subscriptions, plus ``code_ok`` / ``refresh_ok`` / ``refresh_error`` flags
-    for the flow to surface the right warning.
+    subscriptions, plus ``code_ok`` / ``refresh_ok`` / ``refresh_error`` flags.
     """
-    token_code = _extract_token_code(raw)
+    auth_code = _extract_auth_code(raw)
     client = TownGasApiClient(
         async_get_clientsession(hass),
         base_url,
         TokenStore("", None),
     )
 
-    # ⚠️ 顺序很关键：先刷新/换发、再校验。
-    # access_token 寿命仅 ~15 分钟，用户从浏览器复制再到 HA 粘贴，中间往往已过期。
-    # 若先 validate（用已死的 access_token）会直接抛 invalid_auth，连保存都失败。
-    # 先用 tokenCode 换发，或用 refresh_token 换出新鲜 access_token，再用它去 validate / 拉户号。
     access = refresh = None
     expires_at = 0.0
     used_code = False
-    if token_code:
-        used_code = await client.async_exchange_token_code(token_code)
+    if auth_code:
+        used_code = await client.async_exchange_auth_code(auth_code)
         if used_code:
             access = client.tokens.access_token
             refresh = client.tokens.refresh_token
             expires_at = client.tokens.expires_at
         else:
-            # 授权码无效/过期：明确报错，让用户重新登录营业厅复制最新地址栏链接。
             raise TownGasAuthError(
-                "用登录码换发 token 失败："
+                "用微信登录码换发 token 失败："
                 + (client.tokens.last_refresh_error or "未知原因")
             )
 
     if not used_code:
         try:
-            access, refresh = _parse_token_input(raw)
+            access, refresh = _parse_token_json(raw)
         except ValueError:
             raise
         refresh_ok = await client.async_try_refresh_token()
@@ -192,15 +210,13 @@ async def _finalize_tokens(
             refresh = client.tokens.refresh_token
             expires_at = client.tokens.expires_at
 
-    # 用（换发后的）access_token 校验并拉户号；若两者都失效则抛 TownGasAuthError，
-    # 由上层 flow 显示 invalid_auth。
+    # 用（换发后的）access_token 拉户号列表校验；失效则抛 TownGasAuthError。
     subs = await client.async_validate_token()
     return {
         CONF_ACCESS_TOKEN: access,
         CONF_REFRESH_TOKEN: refresh,
         CONF_TOKEN_EXPIRES_AT: expires_at,
         CONF_SUBSCRIPTIONS: subs,
-        # 供配置流程判断走的是哪条路径、新粘贴的 refresh_token 到底能不能用
         "code_ok": used_code,
         "refresh_ok": (not used_code)
         and client.tokens.last_refresh_error is None
@@ -227,7 +243,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = {
             "base_url": self._base_url or DEFAULT_BASE_URL,
-            "business_hall_url": BUSINESS_HALL_URL,
+            "wechat_login_url": wechat_login_url(),
             "detail": "",
         }
         if user_input is not None:
@@ -308,9 +324,6 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 subs = []
                 for sel in selected:
                     org_code, subs_code = sel.split("|", 1)
-                    # Store with snake_case keys — the rest of the integration
-                    # (coordinator / sensor) reads subs_code / org_code. Storing
-                    # camelCase here would raise KeyError on first refresh.
                     subs.append({"org_code": org_code, "subs_code": subs_code})
                 return self.async_create_entry(
                     title="港华燃气",
@@ -336,10 +349,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Ask for a fresh token (authorization code URL or token JSON)."""
+        """Ask for a fresh WeChat login code (or token JSON)."""
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = {
-            "business_hall_url": BUSINESS_HALL_URL,
+            "wechat_login_url": wechat_login_url(),
             "detail": "",
         }
         entry = self._get_reauth_entry()
@@ -388,7 +401,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class TownGasOptionsFlow(config_entries.OptionsFlow):
-    """Options flow: update / token-refresh intervals."""
+    """Options flow: update scan / token-refresh intervals."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.config_entry = config_entry

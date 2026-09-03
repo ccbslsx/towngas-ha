@@ -259,8 +259,9 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
         if key == "previous_reading":
             return _f(bill.get("lastReading"))
         if key == "bill_amount":
-            # chrgSum 单位为「分」
-            return _fen(bill.get("chrgSum"))
+            # v1.5.0 切换 vcc-cbs 网关：chrgSum 单位（分/元）待探测确认，
+            # 此处先原值透传，锁定字段后统一校准（勿在此 ÷100）。
+            return _f(bill.get("chrgSum"))
         if key == "gas_price":
             price = None
             if self._steps:
@@ -307,11 +308,13 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             attrs["用气量"] = _f(bill.get("amount"))
             attrs["本期表数"] = _f(bill.get("currReading"))
             attrs["上期表数"] = _f(bill.get("lastReading"))
-            # unpaidLateFee / paidSum 单位为「分」
-            attrs["违约金"] = _fen(bill.get("unpaidLateFee"))
-            attrs["余额抵扣"] = _fen(bill.get("paidSum"))
+            # vcc-cbs 单位待探测确认：先原值透传，不 ÷100
+            attrs["chrgSum(原始)"] = _f(bill.get("chrgSum"))
+            attrs["违约金"] = _f(bill.get("unpaidLateFee"))
+            attrs["余额抵扣"] = _f(bill.get("paidSum"))
             attrs["是否欠费"] = bool(_f(bill.get("totalUnpaidFee")))
-            # 阶梯明细里 chrgSum 已是「元」(字符串)，amount 为 m³
+            attrs["金额单位(待校准)"] = "分/元 未定，请用 authCode 探测后确认"
+            # 阶梯明细里 chrgSum 为字符串，amount 为 m³
             attrs["阶梯明细"] = [
                 {
                     "单价": _f(s.get("price")),

@@ -22,10 +22,11 @@ from .const import (
     CONF_TOKEN_EXPIRES_AT,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
-    OAUTH_TOKEN_PATH,
     OPT_TOKEN_REFRESH_INTERVAL,
     SERVICE_FORCE_REFRESH,
     VERSION,
+    WECHAT_HOST,
+    WECHAT_OAUTH_PATH,
 )
 from .coordinator import TownGasCoordinator
 
@@ -36,17 +37,19 @@ PLATFORMS = [Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Towngas from a config entry."""
+    # v1.5.0 起鉴权/数据统一走微信中央网关；忽略旧版可能残留的营业厅 base_url。
+    api_base = f"https://{WECHAT_HOST}"
     _LOGGER.info(
-        "Towngas 港华燃气集成启动 v%s | 刷新端点 %s%s | 是否持有 refresh_token: %s",
+        "Towngas 港华燃气集成启动 v%s | 微信中央网关 %s%s | 是否持有 refresh_token: %s",
         VERSION,
-        entry.data[CONF_BASE_URL].rstrip("/"),
-        OAUTH_TOKEN_PATH,
+        api_base.rstrip("/"),
+        WECHAT_OAUTH_PATH,
         bool(entry.data.get(CONF_REFRESH_TOKEN)),
     )
     session = async_get_clientsession(hass)
     client = TownGasApiClient(
         session,
-        entry.data[CONF_BASE_URL],
+        api_base,
         TokenStore(
             entry.data[CONF_ACCESS_TOKEN],
             entry.data.get(CONF_REFRESH_TOKEN),
