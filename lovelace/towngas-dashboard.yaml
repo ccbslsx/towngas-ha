@@ -16,7 +16,7 @@
 #       sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi    （本期用气）
 #   下面已按你实际的两个户号写好。拼音映射表（用于核对/替换）：
 #       本期表数=ben_qi_biao_shu   本期用气=ben_qi_yong_qi   上期表数=shang_qi_biao_shu
-#       本期账单金额=ben_qi_zhang_dan_jin_e   用气单价=yong_qi_dan_jia
+#       本期账单金额=ben_qi_zhang_dan_jin_e   用气单价=yong_qi_dan_jie
 #       账户余额=zhang_hu_yu_e   欠费金额=qian_fei_jin_e   账期=zhang_qi
 #   若某图表空白，说明该传感器的拼音拼写与上面不同 —— 到「开发者工具 → 状态」搜
 #   gang_hua_ran_qi，把对应实体 id 替换进本文件即可。
@@ -54,7 +54,7 @@ views:
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
           - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
           - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
           - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
           - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
@@ -67,7 +67,7 @@ views:
           - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
           - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
           - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
           - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
           - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
           - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
@@ -185,7 +185,7 @@ views:
           - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
           - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
           - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
             attribute: 欠费笔数
@@ -202,7 +202,7 @@ views:
           - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
           - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
           - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jia
+          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
           - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
           - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
             attribute: 欠费笔数
@@ -232,7 +232,7 @@ views:
 #           - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
 #           - sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
 #           - sensor.gang_hua_ran_qi_1500185660_zhang_qi
-#           - sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jia
+#           - sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
 #           - sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
 #           - sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
 #       - type: statistics-graph
