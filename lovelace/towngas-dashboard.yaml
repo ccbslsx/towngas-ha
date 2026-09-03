@@ -102,11 +102,11 @@ views:
                 name: 当前账期
                 icon: mdi:calendar
 
-      # ---------- 3. 关键数字（stat 卡 · 带 sparkline 趋势线） ----------
+      # ---------- 3. 关键数字（stat 卡 · 2×2 网格 · 带 sparkline 趋势线） ----------
       - type: horizontal-stack
         cards:
           - type: statistic
-            name: 本期用气·1500185660
+            name: "1500185660 · 本期用气"
             icon: mdi:fire
             entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
             stat_type: mean
@@ -114,15 +114,17 @@ views:
               calendar:
                 period: month
           - type: statistic
-            name: 本期用气·1500185695
+            name: "1500185695 · 本期用气"
             icon: mdi:fire
             entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
             stat_type: mean
             period:
               calendar:
                 period: month
+      - type: horizontal-stack
+        cards:
           - type: statistic
-            name: 账户余额·1500185660
+            name: "1500185660 · 账户余额"
             icon: mdi:wallet
             entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
             stat_type: mean
@@ -130,7 +132,7 @@ views:
               calendar:
                 period: month
           - type: statistic
-            name: 账户余额·1500185695
+            name: "1500185695 · 账户余额"
             icon: mdi:wallet
             entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
             stat_type: mean
@@ -145,7 +147,7 @@ views:
           # ---- 用气量与累计表数趋势 ----
           - type: custom:apexcharts-card
             graph_span: "13month"
-            chart_height: 280px
+            height: 280
             header:
               show: true
               title: 用气量与累计表数趋势
@@ -172,7 +174,7 @@ views:
           # ---- 月度用气对比（历史比对核心） ----
           - type: custom:apexcharts-card
             graph_span: "13month"
-            chart_height: 280px
+            height: 280
             header:
               show: true
               title: 月度用气对比（历史比对）
@@ -195,7 +197,7 @@ views:
           # ---- 账单金额趋势 ----
           - type: custom:apexcharts-card
             graph_span: "13month"
-            chart_height: 280px
+            height: 280
             header:
               show: true
               title: 账单金额趋势（¥）
@@ -214,7 +216,7 @@ views:
           # ---- 账户余额与欠费 ----
           - type: custom:apexcharts-card
             graph_span: "13month"
-            chart_height: 280px
+            height: 280
             header:
               show: true
               title: 账户余额与欠费（¥）
