@@ -39,17 +39,40 @@
     "step": {
       "init": {
         "title": "港华燃气选项",
-        "description": "每日 23:30–00:30（CST）为港华燃气系统维护窗口，此期间自动跳过数据请求，传感器保持上次读数；Token 健康检查不受影响。",
+        "description": "请选择要操作的项目：\n- **管理户号**：添加或删除燃气户号（同一微信账户下的多个户号可累加，无需重复微信授权）；\n- **调整刷新间隔**：修改数据刷新与 Token 刷新频率。"
+      },
+      "accounts": {
+        "title": "管理户号",
+        "description": "当前已添加的户号：\n{accounts}\n\n选择「添加户号」增加新户号，或「删除户号」移除。添加/删除后集成会自动重新加载并刷新传感器。",
+        "menu": {
+          "add_account": "添加户号",
+          "remove_account": "删除户号",
+          "done": "完成"
+        }
+      },
+      "add_account": {
+        "title": "添加户号",
+        "description": "填写要新增的户号信息（与初始配置相同）。同一微信账户下的多个户号可在此累加，无需重新微信登录。\n- 户号标识(subs_id)：必填；\n- 户号(subs_code) / 组织机构代码(org_code)：选填，填写后才有账单/余额。",
         "data": {
-          "scan_interval": "数据刷新间隔（秒，60-86400，默认 21600）",
-          "token_refresh_interval": "Token 刷新间隔（秒，300-7200，默认 1800）"
+          "subs_id": "户号标识 subs_id（必填，用于读数）",
+          "subs_code": "户号 subs_code（选填，用于账单/余额）",
+          "org_code": "组织机构代码 org_code（选填，与 subs_code 一起填）"
+        }
+      },
+      "remove_account": {
+        "title": "删除户号",
+        "description": "选择要删除的户号（删除后其传感器将被移除）。",
+        "data": {
+          "remove_target": "要删除的户号"
         }
       }
     },
     "error": {
       "invalid_number": "请输入整数",
       "scan_out_of_range": "数据刷新间隔需在 60–86400 秒之间",
-      "token_out_of_range": "Token 刷新间隔需在 300–7200 秒之间"
+      "token_out_of_range": "Token 刷新间隔需在 300-7200 秒之间",
+      "required": "户号标识(subs_id)为必填项",
+      "duplicate": "该户号已存在，请勿重复添加"
     }
   }
 }

@@ -410,11 +410,52 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class TownGasOptionsFlow(config_entries.OptionsFlow):
-    """Options flow: update scan / token-refresh intervals."""
+    """Options flow: manage accounts + scan / token-refresh intervals.
+
+    多个户号（subs_id）可挂在同一微信登录下，彼此共用一个 access_token。
+    因此「添加户号」不需要重新走微信 OAuth——直接把新户号写进
+    ``CONF_SUBSCRIPTIONS`` 列表即可，coordinator 会为列表里的每个户号
+    拉取数据并建传感器。
+    """
 
     # 不写 __init__，让基类走默认（新版 HA 强制 self.config_entry 只读）。
 
+    # ------------------------------------------------------------------
+    # 账户读写辅助
+    # ------------------------------------------------------------------
+    def _current_subs(self) -> list[dict[str, Any]]:
+        return list(self.config_entry.data.get(CONF_SUBSCRIPTIONS, []) or [])
+
+    @staticmethod
+    def _subs_label(sub: dict[str, Any]) -> str:
+        return sub.get("subs_code") or sub.get("subs_id") or "未知户号"
+
+    def _save_subs(self, subs: list[dict[str, Any]]) -> None:
+        """Persist the new subscription list into entry.data.
+
+        Triggers the registered update listener (reload), so new sensors
+        appear without restarting HA.
+        """
+        new_data = dict(self.config_entry.data)
+        new_data[CONF_SUBSCRIPTIONS] = subs
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+
+    # ------------------------------------------------------------------
+    # 步骤
+    # ------------------------------------------------------------------
     async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        # 菜单：管理户号 / 调整刷新间隔
+        return self.async_show_menu(
+            step_id="init",
+            menu_options={
+                "accounts": "管理户号（添加 / 删除）",
+                "intervals": "调整刷新间隔",
+            },
+        )
+
+    async def async_step_intervals(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
@@ -463,4 +504,94 @@ class TownGasOptionsFlow(config_entries.OptionsFlow):
                 ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="intervals", data_schema=schema, errors=errors
+        )
+
+    async def async_step_accounts(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        subs = self._current_subs()
+        lines = "\n".join(
+            f"{i+1}. {self._subs_label(s)}（subs_id: {s.get('subs_id')}）"
+            for i, s in enumerate(subs)
+        ) or "（暂无户号）"
+        return self.async_show_menu(
+            step_id="accounts",
+            menu_options={
+                "add_account": "添加户号",
+                "remove_account": "删除户号",
+                "done": "完成",
+            },
+            description_placeholders={"accounts": lines},
+        )
+
+    async def async_step_add_account(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        errors: dict[str, str] = {}
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_SUBS_ID): str,
+                vol.Optional(CONF_SUBS_CODE): str,
+                vol.Optional(CONF_ORG_CODE): str,
+            }
+        )
+        if user_input is not None:
+            subs_id = (user_input.get(CONF_SUBS_ID) or "").strip()
+            subs_code = (user_input.get(CONF_SUBS_CODE) or "").strip() or None
+            org_code = (user_input.get(CONF_ORG_CODE) or "").strip() or None
+            if not subs_id:
+                errors[CONF_SUBS_ID] = "required"
+            elif any(s.get("subs_id") == subs_id for s in self._current_subs()):
+                errors[CONF_SUBS_ID] = "duplicate"
+            else:
+                subs = self._current_subs()
+                subs.append(
+                    {
+                        "subs_id": subs_id,
+                        "subs_code": subs_code,
+                        "org_code": org_code,
+                    }
+                )
+                self._save_subs(subs)
+                return await self.async_step_accounts()
+
+        return self.async_show_form(
+            step_id="add_account",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "subs_id_hint": "preCheck 读数接口用的户号标识（必填）",
+                "subs_code_hint": "历史账单/余额接口用的户号（选填）",
+                "org_code_hint": "组织机构代码（选填，与 subs_code 一起填）",
+            },
+        )
+
+    async def async_step_remove_account(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        errors: dict[str, str] = {}
+        subs = self._current_subs()
+        choices = {self._subs_label(s): s.get("subs_id") for s in subs}
+        schema = vol.Schema(
+            {
+                vol.Required("remove_target"): vol.In(choices),
+            }
+        )
+        if user_input is not None:
+            target = user_input.get("remove_target")
+            new_subs = [s for s in subs if s.get("subs_id") != target]
+            self._save_subs(new_subs)
+            return await self.async_step_accounts()
+
+        if not subs:
+            return await self.async_step_accounts()
+        return self.async_show_form(
+            step_id="remove_account", data_schema=schema, errors=errors
+        )
+
+    async def async_step_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return self.async_create_entry(title="", data={})

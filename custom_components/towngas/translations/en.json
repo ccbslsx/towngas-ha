@@ -39,17 +39,40 @@
     "step": {
       "init": {
         "title": "Towngas options",
-        "description": "Daily maintenance window is 23:30–00:30 (CST); data requests are skipped then and sensors keep the last reading. Token health check is unaffected.",
+        "description": "Choose what to manage:\n- **Manage accounts**: add or remove gas subscriptions (multiple subscriptions under the same WeChat login can be combined; no re-authorization needed);\n- **Adjust intervals**: change data refresh and token refresh frequency."
+      },
+      "accounts": {
+        "title": "Manage accounts",
+        "description": "Currently added subscriptions:\n{accounts}\n\nChoose \"Add account\" to add a new one, or \"Remove account\" to delete. Changes take effect automatically after reload.",
+        "menu": {
+          "add_account": "Add account",
+          "remove_account": "Remove account",
+          "done": "Done"
+        }
+      },
+      "add_account": {
+        "title": "Add account",
+        "description": "Enter the subscription to add (same as initial setup). Multiple subscriptions under the same WeChat login can be combined without re-authorizing.\n- subs_id: required;\n- subs_code / org_code: optional; required for bills/balance.",
         "data": {
-          "scan_interval": "Data refresh interval (seconds, 60-86400, default 21600)",
-          "token_refresh_interval": "Token refresh interval (seconds, 300-7200, default 1800)"
+          "subs_id": "subs_id (required, for meter reading)",
+          "subs_code": "subs_code (optional, for bills/balance)",
+          "org_code": "org_code (optional, together with subs_code)"
+        }
+      },
+      "remove_account": {
+        "title": "Remove account",
+        "description": "Select the subscription to remove (its sensors will be removed).",
+        "data": {
+          "remove_target": "Subscription to remove"
         }
       }
     },
     "error": {
       "invalid_number": "Please enter an integer",
       "scan_out_of_range": "Data refresh interval must be between 60 and 86400 seconds",
-      "token_out_of_range": "Token refresh interval must be between 300 and 7200 seconds"
+      "token_out_of_range": "Token refresh interval must be between 300 and 7200 seconds",
+      "required": "subs_id is required",
+      "duplicate": "This subscription already exists"
     }
   }
 }
