@@ -260,7 +260,8 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             # 核心：来自 preCheck 读数（已验证可用）
             return _f(reading.get("currReading"))
         if key == "previous_reading":
-            return _f(reading.get("lastReading"))
+            # 上期表数：preCheck 不含上期，优先取最新账单明细的 lastReading
+            return _f(bill.get("lastReading")) or _f(reading.get("lastReading"))
         if key == "bill_amount":
             # 优先用账单的 chrgSum；预付费/无账单时回退 preCheck.totalFee
             # （预付费户本期气费通常为 0，已包含在读数接口响应里）。
@@ -321,7 +322,9 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             attrs["违约金"] = _f(bill.get("unpaidLateFee"))
             attrs["余额抵扣"] = _f(bill.get("paidSum"))
             attrs["是否欠费"] = bool(_f(bill.get("totalUnpaidFee")))
-            attrs["金额单位(待校准)"] = "分/元 未定，请用 authCode 探测后确认"
+            # 实测确认：chrgSum(65.55) = price(2.85) × amount(23)，单位为「元」，
+            # 无需 ÷100（与旧营业厅网关「分」不同，vcc-cbs 直接返回元）。
+            attrs["金额单位"] = "元"
             # 阶梯明细里 chrgSum 为字符串，amount 为 m³
             attrs["阶梯明细"] = [
                 {
@@ -340,10 +343,14 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             attrs["欠费笔数"] = self._sub_data.get("unpaid_count", 0)
         elif key == "balance":
             info = self._sub_data.get("sub_info") or {}
+            bal_info = self._sub_data.get("balance_info") or {}
             attrs["户主"] = info.get("name")
             attrs["户号"] = info.get("subsCode") or self._subs_code
             attrs["户址"] = info.get("displayAddr")
             attrs["缴费单位"] = info.get("orgName")
+            attrs["上次抄表日期"] = bal_info.get("last_meter_reading_date")
+            attrs["可用余额(接口)"] = _f(bal_info.get("available_balance"))
+            attrs["应付费用(接口)"] = _f(bal_info.get("fee_payable"))
         return attrs
 
 

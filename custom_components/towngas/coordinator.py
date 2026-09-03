@@ -131,14 +131,14 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 _LOGGER.warning("获取账单列表失败 %s: %s", subs_code, err)
 
             try:
-                balance_from_api = await self.client.async_get_balance(
+                balance_info = await self.client.async_get_balance(
                     subs_id, subs_code, org_code
                 )
             except TownGasAuthError:
                 raise
             except TownGasApiError as err:
                 _LOGGER.warning("获取余额失败 %s: %s", subs_id or subs_code, err)
-                balance_from_api = None
+                balance_info = None
 
             try:
                 result["sub_info"] = await self.client.async_get_sub_info(
@@ -150,19 +150,25 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 _LOGGER.warning("获取户信息失败 %s: %s", subs_code, err)
 
             # 余额：预付费用户的充值余额来自 preCheck.savingSum（最可靠）；
-            # 否则用 gasFeeBaseinfo 的返回值（已用 subsId 调用）。
+            #    否则用 gasFeeBaseinfo 的 availableBalance（已用 subsId 调用）。
             reading = result.get("reading") or {}
             raw_saving = reading.get("savingSum")
             if raw_saving not in (None, ""):
                 result["balance"] = _to_float(raw_saving)
+            elif balance_info:
+                result["balance"] = balance_info.get("available_balance")
             else:
-                result["balance"] = balance_from_api
+                result["balance"] = None
+            result["balance_info"] = balance_info
         else:
             result["balance"] = None
+            result["balance_info"] = None
 
         # 3. 欠费：预付费户不会欠费（余额即充值，不生成账单欠款），直接记 0；
-        #    后付费户从账单列表推导（totalUnpaidFee 之和）。
+        #    后付费户从账单列表推导（totalUnpaidFee 之和），并叠加接口返回的
+        #    gasFeeBaseinfo.feePayable（已出账未缴金额）。
         charge_type = (result.get("reading") or {}).get("chargeType")
+        balance_info = result.get("balance_info") or {}
         if charge_type == "prepay":
             result["arrears"] = 0.0
             result["unpaid_count"] = 0
@@ -172,6 +178,9 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             raw_arrears = sum(
                 (_to_float(b.get("totalUnpaidFee")) or 0.0) for b in unpaid_datas
             )
+            fp = _to_float(balance_info.get("fee_payable"))
+            if fp:
+                raw_arrears = max(raw_arrears, fp)
             result["arrears"] = round(raw_arrears, 2)
             result["unpaid_count"] = len(unpaid_datas)
 

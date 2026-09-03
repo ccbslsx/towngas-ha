@@ -70,6 +70,16 @@ def _sign(params: dict[str, Any]) -> str:
     return _md5(raw + WECHAT_SIGN_SALT).upper()
 
 
+def _to_float(value: Any) -> float | None:
+    """宽松转 float：None/空串/非法值返回 None。"""
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class TownGasAuthError(Exception):
     """Raised when the access token is invalid or expired."""
 
@@ -336,6 +346,10 @@ class TownGasApiClient:
 
         vcc-cbs 的 queryHistoryFee 认 ``subsId``（气户标识），与 preCheck 一致；
         传 subsCode+orgCode 会返回「气户标识不能为空」。优先用 subs_id。
+
+        实测响应结构：``datas`` 是「账期」数组，每个账期含 ``gasFeeList``
+        （具体账单明细，里面有 amount/price/chrgSum/lastReading/currReading
+        等字段）。所以这里把 ``gasFeeList`` 摊平为一条条账单再归一化。
         """
         if subs_id:
             params = {"subsId": subs_id, "pageIndex": page_index, "pageSize": page_size}
@@ -349,7 +363,19 @@ class TownGasApiClient:
         else:
             return []
         data = await self._cbs_get("/charge/queryHistoryFee", params)
-        bills = [self._norm_bill(b) for b in (data.get("datas") or [])]
+        periods = data.get("datas") or []
+        bills: list[dict[str, Any]] = []
+        for period in periods:
+            if not isinstance(period, dict):
+                continue
+            period_ym = period.get("yrMonth")
+            for item in (period.get("gasFeeList") or []):
+                if not isinstance(item, dict):
+                    continue
+                b = self._norm_bill(item)
+                # 账期（YYYY-MM）来自外层，便于展示/排序兜底
+                b["periodMonth"] = period_ym
+                bills.append(b)
         try:
             bills.sort(key=lambda b: str(b.get("yrMonth", "")), reverse=True)
         except TypeError:
@@ -361,11 +387,17 @@ class TownGasApiClient:
         subs_id: str | None = None,
         subs_code: str | None = None,
         org_code: str | None = None,
-    ) -> float | None:
-        """账户余额（charge/gasFeeBaseinfo）。单位待验证，原值透传。
+    ) -> dict[str, Any] | None:
+        """账户余额/应付/上次抄表日（charge/gasFeeBaseinfo）。
+
+        实测响应为**平铺结构**（无 ``datas`` 包裹）：
+
+        * ``availableBalance`` / ``balance``   → 可用余额（元）
+        * ``feePayable``                       → 应付费用（元，预付费为 ``0``）
+        * ``lastMeterReadingDate``             → 上次抄表日期
 
         优先用 subsId（气户标识），与 preCheck 一致；无 subs_id 时回退
-        subsCode+orgCode。余额字段名多候选兜底；单位（分/元）待探测确认。
+        subsCode+orgCode。
         """
         if subs_id:
             params = {"subsId": subs_id}
@@ -374,21 +406,21 @@ class TownGasApiClient:
         else:
             return None
         data = await self._cbs_get("/charge/gasFeeBaseinfo", params)
-        datas = data.get("datas") or []
-        info = datas[0] if datas else {}
-        # 余额字段名未完全确认，多候选兜底；单位（分/元）待探测确认。
-        raw = (
-            info.get("balance")
-            or info.get("acctBalance")
-            or info.get("balanceAmt")
-            or info.get("resBalance")
+        if not isinstance(data, dict):
+            return None
+        # 平铺结构：直接取顶层字段
+        available = (
+            data.get("availableBalance")
+            or data.get("balance")
+            or data.get("acctBalance")
+            or data.get("resBalance")
         )
-        if raw in (None, ""):
-            return None
-        try:
-            return round(float(raw), 2)
-        except (TypeError, ValueError):
-            return None
+        fee_payable = data.get("feePayable") or data.get("feePayableAmt")
+        return {
+            "available_balance": _to_float(available),
+            "fee_payable": _to_float(fee_payable),
+            "last_meter_reading_date": data.get("lastMeterReadingDate"),
+        }
 
     async def async_get_unpaid(self, subs_code: str, org_code: str) -> dict[str, Any]:
         """欠费摘要。v1.5.0 改为从账单列表推导（见 coordinator），此处保留兼容。
