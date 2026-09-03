@@ -1,13 +1,12 @@
 # ============================================================
-# 港华燃气 Towngas · Lovelace 仪表盘（用气 / 账单 / 统计分析）
+# 港华燃气 Towngas · Lovelace 仪表盘（用气 / 账单 / 历史比对）
 # ============================================================
 # 适用：Home Assistant
 #
 # 【前置依赖】
-#   主方案用到了 apexcharts-card（HACS 社区卡片，做历史比对/统计最顺手）。
+#   用到了 apexcharts-card（HACS 社区卡片，做历史比对最顺手）。
 #   安装：HACS → 自定义仓库 → 添加 https://github.com/RomRider/apexcharts-card
 #         （类别：Dashboard）→ 下载 → 重启前端（F5）。
-#   若不想装任何社区卡片，文件最下方附了「纯原生备用方案」（history-graph / statistics-graph，零依赖）。
 #
 # 【实体命名 · 重要】
 #   你的 HA 把中文名转成了拼音 slug，实体 id 形如：
@@ -39,7 +38,7 @@ views:
           # 🔥 港华燃气 · 用气与账单看板
           数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
           所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
-          月度柱状图即为 **历史比对**；stat 卡的 sparkline 即 **统计分析**。
+          月度柱状图即为 **历史比对**。
 
       # ---------- 2. 两户号概览（并排 · entities 卡 + 图标） ----------
       - type: horizontal-stack
@@ -102,72 +101,36 @@ views:
                 name: 当前账期
                 icon: mdi:calendar
 
-      # ---------- 3. 关键数字（stat 卡 · 2×2 网格 · 显示当前值 + sparkline 趋势） ----------
-      # HA statistic 卡 schema stat_type 必填；用 current 显示瞬时值，
-      # sparkline 自动从 recorder history 渲染（无需 period）。
-      - type: horizontal-stack
-        cards:
-          - type: statistic
-            name: "1500185660 · 本期用气"
-            icon: mdi:fire
-            entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-            stat_type: current
-          - type: statistic
-            name: "1500185695 · 本期用气"
-            icon: mdi:fire
-            entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-            stat_type: current
-      - type: horizontal-stack
-        cards:
-          - type: statistic
-            name: "1500185660 · 账户余额"
-            icon: mdi:wallet
-            entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-            stat_type: current
-          - type: statistic
-            name: "1500185695 · 账户余额"
-            icon: mdi:wallet
-            entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-            stat_type: current
-
-      # ---------- 4. 主图表（grid 2×2 · 单图更高更对称，适合窄列面板） ----------
-      - type: grid
-        columns: 2
-        square: false
+      # ---------- 3. 主图表（vertical-stack · 全宽堆叠 · 窄列最易读） ----------
+      - type: vertical-stack
         cards:
 
-          # ---- 用气量与累计表数趋势 ----
+          # ---- 用气量与累计表数趋势（仅累计对比 · 2 户号） ----
           - type: custom:apexcharts-card
             graph_span: "13month"
             header:
               show: true
-              title: 用气量与累计表数趋势
+              title: 累计表数对比（m³）
             series:
               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
                 name: "累计表数 1500185660"
                 type: line
                 color: "#E63946"
                 stroke_width: 3
-              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-                name: "本期用气 1500185660"
-                type: column
-                color: "#457B9D"
+                curve: smooth
               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
                 name: "累计表数 1500185695"
                 type: line
-                color: "#F4A261"
-                stroke_width: 3
-              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-                name: "本期用气 1500185695"
-                type: column
                 color: "#2A9D8F"
+                stroke_width: 3
+                curve: smooth
 
           # ---- 月度用气对比（历史比对核心） ----
           - type: custom:apexcharts-card
             graph_span: "13month"
             header:
               show: true
-              title: 月度用气对比（历史比对）
+              title: 月度用气对比（历史比对 · m³）
             series:
               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
                 name: "1500185660"
@@ -201,113 +164,3 @@ views:
                 type: area
                 color: "#2A9D8F"
                 opacity: 0.35
-
-          # ---- 账户余额与欠费 ----
-          - type: custom:apexcharts-card
-            graph_span: "13month"
-            header:
-              show: true
-              title: 账户余额与欠费（¥）
-            series:
-              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-                name: "余额 1500185660"
-                type: area
-                color: "#2A9D8F"
-                opacity: 0.3
-              - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-                name: "欠费 1500185660"
-                type: line
-                color: "#E63946"
-              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-                name: "余额 1500185695"
-                type: area
-                color: "#8AB17D"
-                opacity: 0.3
-              - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-                name: "欠费 1500185695"
-                type: line
-                color: "#F4A261"
-
-# ============================================================
-# 【纯原生备用方案 · 零 HACS 依赖】
-# 如果你不想装 apexcharts-card，把下面这段单独作为一个 view
-# 粘进仪表盘原始配置即可（历史比对用 statistics-graph 柱状，趋势用 history-graph）。
-# 注意：实体 id 已按你的拼音 slug 格式写。
-# ------------------------------------------------------------
-#   - title: 燃气总览(原生)
-#     path: towngas-native
-#     icon: mdi:gas-cylinder
-#     cards:
-#       - type: horizontal-stack
-#         cards:
-#           - type: entities
-#             title: 概览 · 1500185660
-#             entities:
-#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-#                 name: 本期用气
-#                 icon: mdi:fire
-#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-#                 name: 本期账单
-#                 icon: mdi:receipt-text
-#               - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-#                 name: 账户余额
-#                 icon: mdi:wallet
-#               - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-#                 name: 欠费金额
-#                 icon: mdi:cash-remove
-#               - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
-#                 name: 当前账期
-#                 icon: mdi:calendar
-#               - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-#                 name: 用气单价
-#                 icon: mdi:currency-cny
-#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-#                 name: 本期表数
-#                 icon: mdi:gauge
-#               - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
-#                 name: 上期表数
-#                 icon: mdi:gauge-low
-#           - type: entities
-#             title: 概览 · 1500185695
-#             entities:
-#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-#                 name: 本期用气
-#                 icon: mdi:fire
-#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-#                 name: 本期账单
-#                 icon: mdi:receipt-text
-#               - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-#                 name: 账户余额
-#                 icon: mdi:wallet
-#               - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-#                 name: 欠费金额
-#                 icon: mdi:cash-remove
-#               - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
-#                 name: 当前账期
-#                 icon: mdi:calendar
-#               - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
-#                 name: 用气单价
-#                 icon: mdi:currency-cny
-#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
-#                 name: 本期表数
-#                 icon: mdi:gauge
-#               - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
-#                 name: 上期表数
-#                 icon: mdi:gauge-low
-#       - type: vertical-stack
-#         cards:
-#           - type: history-graph
-#             title: 用气 / 表数历史（户1）
-#             hours_to_show: 8760
-#             entities:
-#               - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-#               - sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-#               - sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-#           - type: history-graph
-#             title: 账单 / 余额历史
-#             hours_to_show: 8760
-#             entities:
-#               - sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-#               - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-#               - sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-# ============================================================
