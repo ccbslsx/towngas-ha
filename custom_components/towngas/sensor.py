@@ -328,6 +328,11 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
                 }
                 for s in self._steps
             ]
+        elif key == "current_reading":
+            # 透出原始读数，便于在不暴露 authCode 的情况下核对字段名/单位
+            r = self._sub_data.get("reading") or {}
+            attrs["原始读数"] = r
+            attrs["读数来源"] = r.get("source") or "未知"
         elif key == "arrears":
             attrs["欠费笔数"] = self._sub_data.get("unpaid_count", 0)
         elif key == "balance":

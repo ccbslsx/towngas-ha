@@ -422,6 +422,59 @@ class TownGasApiClient:
         """
         return await self._cbs_get("/usersubs/getLoginUserInfo")
 
+    async def async_dump_raw(self, sub: dict[str, Any]) -> dict[str, Any]:
+        """诊断用：返回各接口**原始**响应，便于校准字段名与金额单位。
+
+        不依赖任何归一化；调用方（dump_raw 服务）把结果贴回即可分析。
+        每个接口单独 try，互不拖累；失败时记录 ERR 字符串。
+        """
+        subs_id = sub.get("subs_id")
+        subs_code = sub.get("subs_code")
+        org_code = sub.get("org_code")
+        out: dict[str, Any] = {}
+
+        if subs_id:
+            try:
+                out["preCheck_subsId"] = await self._cbs_get(
+                    "/charge/preCheck", {"subsId": subs_id}
+                )
+            except Exception as err:  # noqa: BLE001
+                out["preCheck_subsId"] = f"ERR {err}"
+        if subs_code and org_code:
+            try:
+                out["preCheck_subsCode"] = await self._cbs_get(
+                    "/charge/preCheck",
+                    {"subsCode": subs_code, "orgCode": org_code},
+                )
+            except Exception as err:  # noqa: BLE001
+                out["preCheck_subsCode"] = f"ERR {err}"
+            try:
+                out["queryHistoryFee"] = await self._cbs_get(
+                    "/charge/queryHistoryFee",
+                    {
+                        "subsCode": subs_code,
+                        "orgCode": org_code,
+                        "pageIndex": 1,
+                        "pageSize": 2,
+                    },
+                )
+            except Exception as err:  # noqa: BLE001
+                out["queryHistoryFee"] = f"ERR {err}"
+            try:
+                out["gasFeeBaseinfo"] = await self._cbs_get(
+                    "/charge/gasFeeBaseinfo",
+                    {"subsCode": subs_code, "orgCode": org_code},
+                )
+            except Exception as err:  # noqa: BLE001
+                out["gasFeeBaseinfo"] = f"ERR {err}"
+        try:
+            out["getLoginUserInfo"] = await self._cbs_get(
+                "/usersubs/getLoginUserInfo"
+            )
+        except Exception as err:  # noqa: BLE001
+            out["getLoginUserInfo"] = f"ERR {err}"
+        return out
+
     # ------------------------------------------------------------------
     # Field normalization（双命名兜底 + 原始字段透传）
     # ------------------------------------------------------------------

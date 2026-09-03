@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
     OPT_TOKEN_REFRESH_INTERVAL,
+    SERVICE_DUMP_RAW,
     SERVICE_FORCE_REFRESH,
     VERSION,
     WECHAT_HOST,
@@ -157,6 +158,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN, SERVICE_FORCE_REFRESH, _handle_force_refresh
         )
+
+    # 诊断服务：导出各接口原始返回，便于在不暴露 authCode 的情况下校准字段
+    # 名与金额单位。用户在 Developer Tools → 服务 调用 `towngas.dump_raw`，
+    # 把返回结果贴回即可，无需再把 authCode 交给我。
+    if not hass.services.has_service(DOMAIN, SERVICE_DUMP_RAW):
+
+        async def _handle_dump_raw(call: ServiceCall) -> dict[str, Any]:
+            entry_id = call.data.get("entry_id")
+            out: dict[str, Any] = {}
+            for e in hass.config_entries.async_entries(DOMAIN):
+                if entry_id and e.entry_id != entry_id:
+                    continue
+                coordinator = hass.data.get(DOMAIN, {}).get(e.entry_id)
+                if coordinator is None:
+                    continue
+                for sub in coordinator.subscriptions:
+                    label = f"{e.title or e.entry_id}/{sub.get('subs_code') or sub.get('subs_id')}"
+                    try:
+                        out[label] = await coordinator.client.async_dump_raw(sub)
+                    except Exception as err:  # noqa: BLE001
+                        out[label] = f"ERR {err}"
+            return out
+
+        hass.services.async_register(DOMAIN, SERVICE_DUMP_RAW, _handle_dump_raw)
 
     return True
 
