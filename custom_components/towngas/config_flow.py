@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from typing import Any
+from urllib.parse import unquote
 
 import voluptuous as vol
 
@@ -23,6 +24,7 @@ from homeassistant.helpers.selector import (
 
 from .api import TokenStore, TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
+    BUSINESS_HALL_URL,
     CONF_ACCESS_TOKEN,
     CONF_BASE_URL,
     CONF_REFRESH_TOKEN,
@@ -105,44 +107,104 @@ def _parse_token_input(raw: str) -> tuple[str, str | None]:
     return raw, None
 
 
+def _extract_token_code(raw: str) -> str | None:
+    """从粘贴内容里抽取营业厅登录后带回的授权码（tokenCode / code）。
+
+    支持三种形态：
+      * 完整重定向 URL：``https://.../h5-gas/?{"tokenCode":"abc"}`` 或 ``?tokenCode=abc``
+      * 含 ``tokenCode`` / ``code`` 参数的任意文本
+      * 裸授权码字符串（本身不含 token JSON 结构）
+
+    返回授权码字符串；若明显是 token JSON / access_token 则返回 None（交由
+    ``_parse_token_input`` 处理，避免误判）。
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    # URL 可能经过编码（?%7B%22tokenCode%22...），先解码再匹配
+    decoded = unquote(raw)
+    patterns = [
+        r'"tokenCode"\s*:\s*"([^"]+)"',          # JSON 形态：{"tokenCode":"abc"}
+        r'[?&]tokenCode=([^&\s"\'}>]+)',          # ?tokenCode=abc
+        r'[?&]code=([^&\s"\'}>]+)',               # ?code=abc（authorization_code 形态）
+    ]
+    for pat in patterns:
+        m = re.search(pat, decoded)
+        if not m:
+            m = re.search(pat, raw)
+        if m:
+            code = m.group(1).strip().strip('"{}')
+            if code:
+                return code
+    return None
+
+
 async def _finalize_tokens(
-    hass, base_url: str, access: str, refresh: str | None
+    hass, base_url: str, raw: str
 ) -> dict[str, Any]:
-    """Validate, then attempt a token refresh to capture a fresh token + expiry.
+    """Validate, then obtain usable tokens from either:
+
+    1. a pasted **authorization code** (``tokenCode``/``code`` from the
+       business-hall redirect URL after login) — exchanged via
+       ``weboauth2Code2Token``; OR
+    2. a pasted **access_token (+ optional refresh_token)** / full token JSON —
+       validated, then proactively refreshed to capture a fresh token + expiry.
 
     Returns a dict with access_token / refresh_token / token_expires_at /
-    subscriptions. The access token is first validated (so an invalid token
-    fails loudly); a successful refresh swaps in the freshly-issued tokens and
-    expiry. If the refresh_token happens to be unusable we keep the original
-    (already-valid) access token with an unknown expiry (0) — reactive refresh
-    will handle it later, so setup never blocks on a flaky refresh.
+    subscriptions, plus ``code_ok`` / ``refresh_ok`` / ``refresh_error`` flags
+    for the flow to surface the right warning.
     """
+    token_code = _extract_token_code(raw)
     client = TownGasApiClient(
         async_get_clientsession(hass),
         base_url,
-        TokenStore(access, refresh),
+        TokenStore("", None),
     )
-    # ⚠️ 顺序很关键：先刷新、再校验。
+
+    # ⚠️ 顺序很关键：先刷新/换发、再校验。
     # access_token 寿命仅 ~15 分钟，用户从浏览器复制再到 HA 粘贴，中间往往已过期。
-    # 若先 validate（用已死的 access_token）会直接抛 invalid_auth，连保存都失败，
-    # 而 refresh_token（不轮换、可永久复用）根本没机会用 → 陷入「粘贴→过期→再粘贴」死循环。
-    # 先 try_refresh 会用 refresh_token 换出新鲜 access_token，再用它去 validate / 拉户号。
+    # 若先 validate（用已死的 access_token）会直接抛 invalid_auth，连保存都失败。
+    # 先用 tokenCode 换发，或用 refresh_token 换出新鲜 access_token，再用它去 validate / 拉户号。
+    access = refresh = None
     expires_at = 0.0
-    refresh_ok = await client.async_try_refresh_token()
-    # 用（刷新后的）access_token 校验并拉户号；若两者都失效则抛 TownGasAuthError，
+    used_code = False
+    if token_code:
+        used_code = await client.async_exchange_token_code(token_code)
+        if used_code:
+            access = client.tokens.access_token
+            refresh = client.tokens.refresh_token
+            expires_at = client.tokens.expires_at
+        else:
+            # 授权码无效/过期：明确报错，让用户重新登录营业厅复制最新地址栏链接。
+            raise TownGasAuthError(
+                "用登录码换发 token 失败："
+                + (client.tokens.last_refresh_error or "未知原因")
+            )
+
+    if not used_code:
+        try:
+            access, refresh = _parse_token_input(raw)
+        except ValueError:
+            raise
+        refresh_ok = await client.async_try_refresh_token()
+        if refresh_ok:
+            access = client.tokens.access_token
+            refresh = client.tokens.refresh_token
+            expires_at = client.tokens.expires_at
+
+    # 用（换发后的）access_token 校验并拉户号；若两者都失效则抛 TownGasAuthError，
     # 由上层 flow 显示 invalid_auth。
     subs = await client.async_validate_token()
-    if refresh_ok:
-        access = client.tokens.access_token
-        refresh = client.tokens.refresh_token
-        expires_at = client.tokens.expires_at
     return {
         CONF_ACCESS_TOKEN: access,
         CONF_REFRESH_TOKEN: refresh,
         CONF_TOKEN_EXPIRES_AT: expires_at,
         CONF_SUBSCRIPTIONS: subs,
-        # 供配置流程判断新粘贴的 refresh_token 到底能不能用
-        "refresh_ok": refresh_ok,
+        # 供配置流程判断走的是哪条路径、新粘贴的 refresh_token 到底能不能用
+        "code_ok": used_code,
+        "refresh_ok": (not used_code)
+        and client.tokens.last_refresh_error is None
+        and bool(refresh),
         "refresh_error": client.tokens.last_refresh_error,
     }
 
@@ -165,6 +227,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = {
             "base_url": self._base_url or DEFAULT_BASE_URL,
+            "business_hall_url": BUSINESS_HALL_URL,
             "detail": "",
         }
         if user_input is not None:
@@ -172,38 +235,36 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL) or DEFAULT_BASE_URL
             ).rstrip("/")
             try:
-                access, refresh = _parse_token_input(
-                    user_input[CONF_ACCESS_TOKEN]
+                finalized = await _finalize_tokens(
+                    self.hass, base_url, user_input[CONF_ACCESS_TOKEN]
                 )
             except ValueError:
                 errors[CONF_ACCESS_TOKEN] = "invalid_token_format"
+            except TownGasAuthError as err:
+                errors[CONF_ACCESS_TOKEN] = "invalid_auth"
+                description_placeholders["detail"] = _format_detail(err)
+                description_placeholders["base_url"] = base_url
+            except TownGasApiError as err:
+                errors["base"] = "cannot_connect"
+                description_placeholders["detail"] = _format_detail(err)
+                description_placeholders["base_url"] = base_url
             else:
-                try:
-                    finalized = await _finalize_tokens(
-                        self.hass, base_url, access, refresh
+                self._access_token = finalized[CONF_ACCESS_TOKEN]
+                self._refresh_token = finalized[CONF_REFRESH_TOKEN]
+                self._token_expires_at = finalized[CONF_TOKEN_EXPIRES_AT]
+                self._base_url = base_url
+                self._subs = finalized[CONF_SUBSCRIPTIONS]
+                if (
+                    not finalized.get("code_ok")
+                    and finalized.get("refresh_ok") is False
+                ):
+                    _async_warn_refresh_unusable(
+                        self.hass, finalized.get("refresh_error")
                     )
-                except TownGasAuthError as err:
-                    errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                    description_placeholders["detail"] = _format_detail(err)
-                    description_placeholders["base_url"] = base_url
-                except TownGasApiError as err:
-                    errors["base"] = "cannot_connect"
-                    description_placeholders["detail"] = _format_detail(err)
-                    description_placeholders["base_url"] = base_url
+                if not self._subs:
+                    errors["base"] = "no_subscriptions"
                 else:
-                    self._access_token = finalized[CONF_ACCESS_TOKEN]
-                    self._refresh_token = finalized[CONF_REFRESH_TOKEN]
-                    self._token_expires_at = finalized[CONF_TOKEN_EXPIRES_AT]
-                    self._base_url = base_url
-                    self._subs = finalized[CONF_SUBSCRIPTIONS]
-                    if finalized.get("refresh_ok") is False:
-                        _async_warn_refresh_unusable(
-                            self.hass, finalized.get("refresh_error")
-                        )
-                    if not self._subs:
-                        errors["base"] = "no_subscriptions"
-                    else:
-                        return await self.async_step_subs()
+                    return await self.async_step_subs()
 
         return self.async_show_form(
             step_id="user",
@@ -275,44 +336,41 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Ask for a fresh token."""
+        """Ask for a fresh token (authorization code URL or token JSON)."""
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = {"detail": ""}
+        description_placeholders: dict[str, str] = {
+            "business_hall_url": BUSINESS_HALL_URL,
+            "detail": "",
+        }
         entry = self._get_reauth_entry()
 
         if user_input is not None:
             base_url = entry.data.get(CONF_BASE_URL, DEFAULT_BASE_URL)
             try:
-                access, refresh = _parse_token_input(
-                    user_input[CONF_ACCESS_TOKEN]
+                finalized = await _finalize_tokens(
+                    self.hass, base_url, user_input[CONF_ACCESS_TOKEN]
                 )
             except ValueError:
                 errors[CONF_ACCESS_TOKEN] = "invalid_token_format"
+            except TownGasAuthError as err:
+                errors[CONF_ACCESS_TOKEN] = "invalid_auth"
+                description_placeholders["detail"] = _format_detail(err)
+            except TownGasApiError as err:
+                errors["base"] = "cannot_connect"
+                description_placeholders["detail"] = _format_detail(err)
             else:
-                try:
-                    finalized = await _finalize_tokens(
-                        self.hass, base_url, access, refresh
+                new_data = dict(entry.data)
+                new_data[CONF_ACCESS_TOKEN] = finalized[CONF_ACCESS_TOKEN]
+                new_data[CONF_REFRESH_TOKEN] = finalized[CONF_REFRESH_TOKEN]
+                new_data[CONF_TOKEN_EXPIRES_AT] = finalized[CONF_TOKEN_EXPIRES_AT]
+                if (
+                    not finalized.get("code_ok")
+                    and finalized.get("refresh_ok") is False
+                ):
+                    _async_warn_refresh_unusable(
+                        self.hass, finalized.get("refresh_error")
                     )
-                except TownGasAuthError as err:
-                    errors[CONF_ACCESS_TOKEN] = "invalid_auth"
-                    description_placeholders["detail"] = _format_detail(err)
-                except TownGasApiError as err:
-                    errors["base"] = "cannot_connect"
-                    description_placeholders["detail"] = _format_detail(err)
-                else:
-                    new_data = dict(entry.data)
-                    new_data[CONF_ACCESS_TOKEN] = finalized[CONF_ACCESS_TOKEN]
-                    new_data[CONF_REFRESH_TOKEN] = finalized[CONF_REFRESH_TOKEN]
-                    new_data[CONF_TOKEN_EXPIRES_AT] = finalized[
-                        CONF_TOKEN_EXPIRES_AT
-                    ]
-                    if finalized.get("refresh_ok") is False:
-                        _async_warn_refresh_unusable(
-                            self.hass, finalized.get("refresh_error")
-                        )
-                    return self.async_update_reload_and_abort(
-                        entry, data=new_data
-                    )
+                return self.async_update_reload_and_abort(entry, data=new_data)
 
         return self.async_show_form(
             step_id="reauth_confirm",

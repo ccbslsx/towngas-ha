@@ -37,6 +37,8 @@ from .const import (
     CODE_OAUTH_TOKEN,
     DEFAULT_TOKEN_EXPIRES_IN,
     LOGGER,
+    OAUTH_CODE2TOKEN_PATH,
+    OAUTH_CODE_PARAM,
     OAUTH_GRANT_TYPE_REFRESH,
     OAUTH_REDIRECT_URI_PATH,
     OAUTH_SCOPE,
@@ -333,6 +335,70 @@ class TownGasApiClient:
             "Towngas access token 已刷新，有效期 %s 秒（%s）",
             expires_in,
             "换发新 token" if rotated else "复用原 token",
+        )
+        return True
+
+    async def async_exchange_token_code(self, token_code: str) -> bool:
+        """用营业厅登录后浏览器重定向带回的 tokenCode 换发 access_token + refresh_token。
+
+        对应营业厅前端 ``weboauth2Code2Token`` 端点（登录成功 → ``/loginRedirect?...&
+        tokenCode=XXX`` → 调此端点）。返回 True 并更新 token store（access_token /
+        refresh_token / expires_at）；失败返回 False（调用方应回退到 reauth 提示）。
+
+        响应结构与 refresh 端点一致：``{"access_token","token_type",
+        "refresh_token","expires_in","scope"}``，不带 resultCode。
+        """
+        if not token_code:
+            self.tokens.last_refresh_error = "未提供 tokenCode（登录后地址栏里的 tokenCode 参数）"
+            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
+            return False
+
+        url = self._build_url(
+            CODE_OAUTH_TOKEN,
+            OAUTH_CODE2TOKEN_PATH,
+            {OAUTH_CODE_PARAM: token_code},
+            authenticated=False,
+        )
+
+        try:
+            async with self._session.get(
+                url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except aiohttp.ClientResponseError as err:
+            self.tokens.last_refresh_error = f"换发端点返回 HTTP {err.status}"
+            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
+            return False
+        except (aiohttp.ClientError, json.JSONDecodeError, TimeoutError) as err:
+            self.tokens.last_refresh_error = f"网络错误：{err}"
+            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
+            return False
+
+        new_access = data.get("access_token") if isinstance(data, dict) else None
+        if not new_access:
+            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
+            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
+            if rc:
+                self.tokens.last_refresh_error = (
+                    f"服务端拒绝 resultCode={rc} {msg}".strip()
+                )
+            else:
+                self.tokens.last_refresh_error = f"响应异常：{str(data)[:120]}"
+            LOGGER.warning("tokenCode 换发失败：%s", self.tokens.last_refresh_error)
+            return False
+
+        self.tokens.access_token = new_access
+        if data.get("refresh_token"):
+            self.tokens.refresh_token = data["refresh_token"]
+        expires_in = int(data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN)
+        self.tokens.expires_at = time.time() + expires_in
+        self.tokens.last_refresh_error = None
+        LOGGER.info(
+            "tokenCode 换发成功，有效期 %s 秒",
+            expires_in,
         )
         return True
 

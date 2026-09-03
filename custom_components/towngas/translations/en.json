@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Towngas (港华燃气)",
-        "description": "Log in to {base_url}, then press F12 → Application → Local Storage and copy the value of the key 'token' (either the full JSON or just the access_token).{detail}",
+        "description": "Method 1 (recommended): open {business_hall_url}, log in to the portal. After login the address bar will look like …tokenCode=xxxx — copy the whole URL and paste it below, the integration will exchange the login code for a token automatically. Method 2 (fallback): after login press F12 → Application → Local Storage and copy the value of the key 'token' (full JSON or just access_token).{detail}",
         "data": {
-          "access_token": "Access token (localStorage 'token' value)",
+          "access_token": "Access token / the tokenCode URL from the address bar",
           "base_url": "Portal URL"
         }
       },
@@ -18,9 +18,9 @@
       },
       "reauth_confirm": {
         "title": "Token expired",
-        "description": "The access token has expired. Log in to the portal again, press F12 → Application → Local Storage, and paste the FULL value of the 'token' key below (it must include the refresh_token field — otherwise the refresh token is empty and the prompt will reappear soon).{detail}",
+        "description": "The token has expired. Recommended: open {business_hall_url}, log in, then copy the whole address-bar URL containing 'tokenCode=' and paste it below — the integration will exchange it for a fresh token automatically (no need to dig into Local Storage). You may also paste the full 'token' JSON from Local Storage (must include refresh_token).{detail}",
         "data": {
-          "access_token": "New token (paste the full JSON including refresh_token)"
+          "access_token": "tokenCode URL from address bar / new token"
         }
       }
     },

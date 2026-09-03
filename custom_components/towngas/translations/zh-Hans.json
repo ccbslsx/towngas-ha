@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "港华燃气（Towngas）",
-        "description": "登录 {base_url} 后，按 F12 → 应用 → 本地存储 → 复制键 token 的值粘贴到下面（支持整个 JSON 或仅 access_token）。{detail}",
+        "description": "方式一（推荐）：打开 {business_hall_url} 登录营业厅，登录后浏览器地址栏会变成类似 …tokenCode=xxxx 的形式，把整段网址复制粘贴到下面，集成会自动用该登录码换发 token。方式二（备用）：登录后按 F12 → 应用 → 本地存储 → 复制键 token 的值（支持整个 JSON 或仅 access_token）。{detail}",
         "data": {
-          "access_token": "Access Token（localStorage 中的 token 值）",
+          "access_token": "Access Token / 登录后地址栏里的 tokenCode 网址",
           "base_url": "营业厅地址"
         }
       },
@@ -18,9 +18,9 @@
       },
       "reauth_confirm": {
         "title": "Token 已过期",
-        "description": "access token 已过期。请重新登录网上营业厅，按 F12 → 应用 → 本地存储，复制键 token 的【完整内容】粘贴到下面（务必包含 refresh_token 字段，否则刷新令牌无效、很快就会再次过期弹窗）。{detail}",
+        "description": "token 已过期。推荐方式：打开 {business_hall_url} 登录营业厅，登录后复制地址栏中带 tokenCode= 的整段网址粘贴到下面，集成会自动换发新 token（无需翻 localStorage）。也可粘贴营业厅 localStorage 里键 token 的完整 JSON（需含 refresh_token）。{detail}",
         "data": {
-          "access_token": "新的 Token（建议粘贴含 refresh_token 的完整 JSON）"
+          "access_token": "登录后地址栏 tokenCode 网址 / 新的 Token"
         }
       }
     },

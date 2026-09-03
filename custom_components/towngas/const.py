@@ -6,7 +6,7 @@ import logging
 from typing import Final
 
 # 集成版本（与 manifest.json 保持一致；仅用于启动日志，方便确认 HA 里实际跑的是哪版）。
-VERSION: Final = "1.2.1"
+VERSION: Final = "1.3.0"
 
 DOMAIN: Final = "towngas"
 LOGGER: Final = logging.getLogger(__package__)
@@ -71,6 +71,16 @@ TOKEN_EXPIRY_BUFFER_SECS: Final = 300
 CODE_OAUTH_TOKEN: Final = 1502
 
 USER_AGENT: Final = "Mozilla/5.0"
+
+# --- 授权码换 token（营业厅登录后浏览器重定向带回 tokenCode，用此端点换新 token） ---
+# 逆向自营业厅前端 app.js：登录成功 → /loginRedirect?...&tokenCode=XXX →
+# 调 weboauth2Code2Token?tokenCode=XXX 得到 access_token+refresh_token。
+# 这样重认证只需「打开营业厅 → 登录 → 复制地址栏里 tokenCode=... 那段 → 粘贴」，
+# 不再去 localStorage 挖 JSON，体验等同杭州港华的「扫码 → 粘 authCode」。
+# 实测：传假 tokenCode 返回 resultCode=90142「授权码已失效」，说明端点接受该参数。
+OAUTH_CODE2TOKEN_PATH: Final = "/openapi/uv1/weboauth2Code2Token"
+OAUTH_CODE_PARAM: Final = "tokenCode"
+BUSINESS_HALL_URL: Final = "https://maanshan.towngasvcc.com/h5-gas/"
 
 # 调试/手动服务：强制刷新 token（用于验证刷新机制是否工作）
 SERVICE_FORCE_REFRESH: Final = "force_refresh_token"
