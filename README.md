@@ -136,6 +136,19 @@ HA → 设置 → 设备与服务 → Towngas → 配置（右上角「配置」
 > - 集成内置**真实的 token 自动续期**（微信 OAuth `refreshToken` 接口 + 签名算法）：token 临近过期时自动静默刷新，多数情况下你无需再手动操作；只有 `refresh_token` 失效时才弹「重新认证」，让你重新走微信登录链接。
 > - 修改配置项后会自动重载集成。
 
+### 管理多个户号（同一微信账户）
+
+如果你在**同一个微信账户**下有多个燃气户号（例如家里有两只表），**无需为每个户号重复走微信登录**。微信 OAuth 的 token 是「微信用户」级别的，调用接口时才带上具体的 `subsId` 去取对应户的数据——因此多个户号可以挂在同一集成实例下，共用一个已登录的 token。
+
+添加 / 删除方式（全程不需要再微信授权）：
+
+1. HA → 设置 → 设备与服务 → Towngas → **配置（选项）**；
+2. 选择 **管理户号（添加 / 删除）**；
+3. **添加户号**：填写新的 `subs_id`（必填，用于读数）与 `subs_code`（选填，用于账单/余额），保存后集成自动重载，该户号的 8 个传感器会出现（设备名形如 `港华燃气 <subs_code>`）；
+4. **删除户号**：从下拉里选要移除的户号，其传感器会一并移除。
+
+> 多个户号共享同一个「微信用户级」token：只要该 token 有效，所有户号都能正常拉数；只有当 token 本身（微信用户级）失效时，才需要重新走一次微信登录（重新认证整个实例）。
+
 ## 校准账单 / 余额字段（可选，待办）
 
 读数（本期/上期表数）已对齐稳定可用的模型，可直接出数。但**账单金额、余额、欠费的单位（分/元）与 `queryHistoryFee` / `gasFeeBaseinfo` 的真实字段名**尚未用真实数据校准，目前为原值透传（best‑effort）。
@@ -151,7 +164,7 @@ HA → 设置 → 设备与服务 → Towngas → 配置（右上角「配置」
 
 ## 工作原理
 
-集成直接调用港华燃气微信中央 VCC 网关（逆向自其 H5 前端 `weixin.towngasvcc.com/h5-gas`，并对照杭州参考版 `palafin02back/hztowngas`）：
+集成直接调用港华燃气微信中央 VCC 网关（逆向自其 H5 前端 `weixin.towngasvcc.com/h5-gas`），并**参考了杭州港华（杭州燃气）开源项目 `palafin02back/hztowngas` 的相关说明**——其微信 OAuth 鉴权流程、请求签名算法、户号字段（`subsId` / `subsCode` / `orgCode`）命名，以及读数/账单接口模型，均作为本集成的主要实现依据。
 
 ### 鉴权（微信 OAuth，`/vcc-oauth/oauth/authorize2/...`）
 
@@ -195,6 +208,10 @@ git push && git push --tags
 ```
 
 推送 `v*` tag 后，GitHub Actions 会自动把 `custom_components/towngas/` 打包成 `towngas.zip` 并创建 Release。HACS 检测到新 commit / Release 后即可「重新下载」更新。
+
+## 参考与致谢
+
+- **杭州港华（杭州燃气）开源项目 [`palafin02back/hztowngas`](https://github.com/palafin02back/hztowngas)**：本集成的微信 OAuth 鉴权流程、请求签名算法、户号字段（`subsId` / `subsCode` / `orgCode`）命名及读数/账单接口模型，主要参考该项目的说明与实现，在此向其作者致谢。
 
 ## 免责声明
 
