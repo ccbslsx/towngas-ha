@@ -102,32 +102,38 @@ views:
                 name: 当前账期
                 icon: mdi:calendar
 
-      # ---------- 3. 关键数字（stat 卡 · 2×2 网格 · 默认显示当前值 + sparkline） ----------
-      # 不写 stat_type / period → 显示当前 state，sparkline 自动从 recorder history 绘趋势线。
-      # 这样新部署的传感器没有月度均值也能立即显示当前数字。
+      # ---------- 3. 关键数字（stat 卡 · 2×2 网格 · 显示当前值 + sparkline 趋势） ----------
+      # HA statistic 卡 schema stat_type 必填；用 current 显示瞬时值，
+      # sparkline 自动从 recorder history 渲染（无需 period）。
       - type: horizontal-stack
         cards:
           - type: statistic
             name: "1500185660 · 本期用气"
             icon: mdi:fire
             entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+            stat_type: current
           - type: statistic
             name: "1500185695 · 本期用气"
             icon: mdi:fire
             entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+            stat_type: current
       - type: horizontal-stack
         cards:
           - type: statistic
             name: "1500185660 · 账户余额"
             icon: mdi:wallet
             entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+            stat_type: current
           - type: statistic
             name: "1500185695 · 账户余额"
             icon: mdi:wallet
             entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+            stat_type: current
 
-      # ---------- 4. 主图表（vertical-stack · 每张全宽 · 更大更清晰） ----------
-      - type: vertical-stack
+      # ---------- 4. 主图表（grid 2×2 · 单图更高更对称，适合窄列面板） ----------
+      - type: grid
+        columns: 2
+        square: false
         cards:
 
           # ---- 用气量与累计表数趋势 ----
