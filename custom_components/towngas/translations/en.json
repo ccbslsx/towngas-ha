@@ -10,7 +10,7 @@
       },
       "subs": {
         "title": "Enter subscription identifiers",
-        "description": "The WeChat-central gateway cannot auto-discover subscriptions, so please enter them manually:\n- **subs_id**: required, used to read the current meter reading (core sensor);\n- **subs_code / org_code**: optional; only when filled will bill history and balance be fetched.\nFind subs_code / org_code in the Towngas WeChat mini-program under "My Accounts".",
+        "description": "The WeChat-central gateway cannot auto-discover subscriptions, so please enter them manually:\n- **subs_id**: required, used to read the current meter reading (core sensor);\n- **subs_code / org_code**: optional; only when filled will bill history and balance be fetched.\nFind subs_code / org_code in the Towngas WeChat mini-program under 'My Accounts'.",
         "data": {
           "subs_id": "subs_id (required, for meter reading)",
           "subs_code": "subs_code (optional, for bills/balance)",
