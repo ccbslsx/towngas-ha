@@ -1,0 +1,250 @@
+# ============================================================
+# 港华燃气 Towngas · Lovelace 仪表盘（用气 / 账单 / 统计分析）
+# ============================================================
+# 适用：Home Assistant
+#
+# 【前置依赖】
+#   主方案用到了 apexcharts-card（HACS 社区卡片，做历史比对/统计最顺手）。
+#   安装：HACS → 自定义仓库 → 添加 https://github.com/RomRider/apexcharts-card
+#         （类别：Dashboard）→ 下载 → 重启前端（F5）。
+#   若不想装任何社区卡片，文件最下方附了「纯原生备用方案」（history-graph / statistics-graph，零依赖）。
+#
+# 【实体命名】
+#   本集成 has_entity_name=True，实体 id 形如：
+#       sensor.towngas_<subs_code>_<key>
+#   例如：sensor.towngas_1500185660_current_usage
+#   下面已按你实际的两个户号（1500185660 / 1500185695）写好。
+#   若你的实体 id 与实际不符，到「开发者工具 → 状态」搜索 towngas 核对后替换即可。
+#
+# 【用法】
+#   方式一（推荐，独立仪表盘）：设置 → 仪表盘 → + 添加仪表盘 → 从空开始 →
+#           右上角 ⋮ → 原始配置编辑器 → 把本文件整个 views: 段粘进去保存。
+#   方式二（并入现有仪表盘）：把你现有 dashboard 的原始配置里，把本文件 views: 内
+#           的那个 view 整个贴进它的 views: 列表即可。
+# ============================================================
+
+title: 港华燃气
+views:
+  - title: 燃气总览
+    path: towngas
+    icon: mdi:gas-cylinder
+    badges: []
+    cards:
+
+      # ---------- 头部说明 ----------
+      - type: markdown
+        content: |
+          # 🔥 港华燃气 · 用气与账单看板
+          数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
+          所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
+          月度柱状图即为 **历史比对**；最小/平均/最大折线为 **统计分析**。
+
+      # ---------- 概览（自动发现全部户号，无需逐个写实体 id） ----------
+      - type: custom:auto-entities
+        card:
+          type: glance
+          title: 各户号实时概览
+          columns: 4
+          show_state: true
+          show_name: true
+        filter:
+          include:
+            - entity_id: "/^sensor\\.towngas_.*_(current_usage|bill_amount|balance|arrears|bill_period|gas_price|current_reading|previous_reading)$/"
+              options: {}
+
+      # ---------- 用气量与累计表数趋势（折线 + 柱） ----------
+      - type: custom:apexcharts-card
+        graph_span: 24
+        header:
+          show: true
+          title: 用气量与累计表数趋势
+        show:
+          last: 13mo
+        span:
+          start: month
+        series:
+          - entity: sensor.towngas_1500185660_current_reading
+            name: 累计表数 1500185660
+            type: line
+            color: "#E63946"
+            stroke_width: 3
+          - entity: sensor.towngas_1500185660_current_usage
+            name: 本期用气 1500185660
+            type: column
+            color: "#457B9D"
+          - entity: sensor.towngas_1500185695_current_reading
+            name: 累计表数 1500185695
+            type: line
+            color: "#F4A261"
+            stroke_width: 3
+          - entity: sensor.towngas_1500185695_current_usage
+            name: 本期用气 1500185695
+            type: column
+            color: "#2A9D8F"
+
+      # ---------- 月度用气对比（历史比对核心） ----------
+      - type: custom:apexcharts-card
+        graph_span: 24
+        header:
+          show: true
+          title: 月度用气对比（历史比对）
+        show:
+          last: 13mo
+        series:
+          - entity: sensor.towngas_1500185660_current_usage
+            name: 1500185660
+            type: column
+            color: "#457B9D"
+            group_by:
+              func: avg
+              duration: 1month
+          - entity: sensor.towngas_1500185695_current_usage
+            name: 1500185695
+            type: column
+            color: "#2A9D8F"
+            group_by:
+              func: avg
+              duration: 1month
+
+      # ---------- 账单金额趋势 ----------
+      - type: custom:apexcharts-card
+        graph_span: 24
+        header:
+          show: true
+          title: 账单金额趋势（¥）
+        show:
+          last: 13mo
+        series:
+          - entity: sensor.towngas_1500185660_bill_amount
+            name: 账单 1500185660
+            type: area
+            color: "#E63946"
+            opacity: 0.35
+          - entity: sensor.towngas_1500185695_bill_amount
+            name: 账单 1500185695
+            type: area
+            color: "#2A9D8F"
+            opacity: 0.35
+
+      # ---------- 用气统计（最小 / 平均 / 最大） ----------
+      - type: statistics-graph
+        title: 用气统计（每月 最小 / 平均 / 最大）
+        period: month
+        days_to_show: 365
+        stat_types:
+          - min
+          - mean
+          - max
+        chart_type: line
+        entities:
+          - sensor.towngas_1500185660_current_usage
+          - sensor.towngas_1500185695_current_usage
+
+      # ---------- 账户余额与欠费 ----------
+      - type: custom:apexcharts-card
+        graph_span: 24
+        header:
+          show: true
+          title: 账户余额与欠费（¥）
+        show:
+          last: 13mo
+        series:
+          - entity: sensor.towngas_1500185660_balance
+            name: 余额 1500185660
+            type: area
+            color: "#2A9D8F"
+            opacity: 0.3
+          - entity: sensor.towngas_1500185660_arrears
+            name: 欠费 1500185660
+            type: line
+            color: "#E63946"
+          - entity: sensor.towngas_1500185695_balance
+            name: 余额 1500185695
+            type: area
+            color: "#8AB17D"
+            opacity: 0.3
+          - entity: sensor.towngas_1500185695_arrears
+            name: 欠费 1500185695
+            type: line
+            color: "#F4A261"
+
+      # ---------- 账单明细（按属性下钻） ----------
+      - type: entities
+        title: 账单明细 · 1500185660
+        entities:
+          - entity: sensor.towngas_1500185660_bill_period
+          - entity: sensor.towngas_1500185660_current_usage
+          - entity: sensor.towngas_1500185660_bill_amount
+          - entity: sensor.towngas_1500185660_gas_price
+          - entity: sensor.towngas_1500185660_balance
+          - entity: sensor.towngas_1500185660_arrears
+            attribute: 欠费笔数
+          - entity: sensor.towngas_1500185660_balance
+            attribute: 上次抄表日期
+          - entity: sensor.towngas_1500185660_balance
+            attribute: 户址
+          - entity: sensor.towngas_1500185660_bill_amount
+            attribute: 阶梯明细
+
+      - type: entities
+        title: 账单明细 · 1500185695
+        entities:
+          - entity: sensor.towngas_1500185695_bill_period
+          - entity: sensor.towngas_1500185695_current_usage
+          - entity: sensor.towngas_1500185695_bill_amount
+          - entity: sensor.towngas_1500185695_gas_price
+          - entity: sensor.towngas_1500185695_balance
+          - entity: sensor.towngas_1500185695_arrears
+            attribute: 欠费笔数
+          - entity: sensor.towngas_1500185695_balance
+            attribute: 上次抄表日期
+          - entity: sensor.towngas_1500185695_balance
+            attribute: 户址
+          - entity: sensor.towngas_1500185695_bill_amount
+            attribute: 阶梯明细
+
+# ============================================================
+# 【纯原生备用方案 · 零 HACS 依赖】
+# 如果你不想装 apexcharts-card / auto-entities，把下面这段单独作为一个 view
+# 粘进仪表盘原始配置即可（历史比对用 history-graph，统计用 statistics-graph）。
+# ------------------------------------------------------------
+#   - title: 燃气总览(原生)
+#     path: towngas-native
+#     icon: mdi:gas-cylinder
+#     cards:
+#       - type: glance
+#         title: 概览 · 1500185660
+#         columns: 4
+#         entities:
+#           - sensor.towngas_1500185660_current_usage
+#           - sensor.towngas_1500185660_bill_amount
+#           - sensor.towngas_1500185660_balance
+#           - sensor.towngas_1500185660_arrears
+#           - sensor.towngas_1500185660_bill_period
+#           - sensor.towngas_1500185660_gas_price
+#           - sensor.towngas_1500185660_current_reading
+#           - sensor.towngas_1500185660_previous_reading
+#       - type: history-graph
+#         title: 用气 / 表数历史
+#         hours_to_show: 8760
+#         entities:
+#           - sensor.towngas_1500185660_current_usage
+#           - sensor.towngas_1500185660_current_reading
+#           - sensor.towngas_1500185695_current_usage
+#       - type: history-graph
+#         title: 账单 / 余额历史
+#         hours_to_show: 8760
+#         entities:
+#           - sensor.towngas_1500185660_bill_amount
+#           - sensor.towngas_1500185660_balance
+#           - sensor.towngas_1500185695_bill_amount
+#       - type: statistics-graph
+#         title: 用气统计(最小/平均/最大)
+#         period: month
+#         days_to_show: 365
+#         stat_types: [min, mean, max]
+#         chart_type: line
+#         entities:
+#           - sensor.towngas_1500185660_current_usage
+#           - sensor.towngas_1500185695_current_usage
+# ============================================================
