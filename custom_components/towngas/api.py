@@ -326,21 +326,29 @@ class TownGasApiClient:
 
     async def async_get_bills(
         self,
-        subs_code: str,
-        org_code: str,
+        subs_id: str | None = None,
+        subs_code: str | None = None,
+        org_code: str | None = None,
         page_index: int = 1,
         page_size: int = 24,
     ) -> list[dict[str, Any]]:
-        """历史账单（charge/queryHistoryFee），归一化为 营业厅字段名。"""
-        data = await self._cbs_get(
-            "/charge/queryHistoryFee",
-            {
+        """历史账单（charge/queryHistoryFee），归一化为 营业厅字段名。
+
+        vcc-cbs 的 queryHistoryFee 认 ``subsId``（气户标识），与 preCheck 一致；
+        传 subsCode+orgCode 会返回「气户标识不能为空」。优先用 subs_id。
+        """
+        if subs_id:
+            params = {"subsId": subs_id, "pageIndex": page_index, "pageSize": page_size}
+        elif subs_code and org_code:
+            params = {
                 "subsCode": subs_code,
                 "orgCode": org_code,
                 "pageIndex": page_index,
                 "pageSize": page_size,
-            },
-        )
+            }
+        else:
+            return []
+        data = await self._cbs_get("/charge/queryHistoryFee", params)
         bills = [self._norm_bill(b) for b in (data.get("datas") or [])]
         try:
             bills.sort(key=lambda b: str(b.get("yrMonth", "")), reverse=True)
@@ -348,12 +356,24 @@ class TownGasApiClient:
             pass
         return bills
 
-    async def async_get_balance(self, subs_code: str, org_code: str) -> float | None:
-        """账户余额（charge/gasFeeBaseinfo）。单位待验证，原值透传。"""
-        data = await self._cbs_get(
-            "/charge/gasFeeBaseinfo",
-            {"subsCode": subs_code, "orgCode": org_code},
-        )
+    async def async_get_balance(
+        self,
+        subs_id: str | None = None,
+        subs_code: str | None = None,
+        org_code: str | None = None,
+    ) -> float | None:
+        """账户余额（charge/gasFeeBaseinfo）。单位待验证，原值透传。
+
+        优先用 subsId（气户标识），与 preCheck 一致；无 subs_id 时回退
+        subsCode+orgCode。余额字段名多候选兜底；单位（分/元）待探测确认。
+        """
+        if subs_id:
+            params = {"subsId": subs_id}
+        elif subs_code and org_code:
+            params = {"subsCode": subs_code, "orgCode": org_code}
+        else:
+            return None
+        data = await self._cbs_get("/charge/gasFeeBaseinfo", params)
         datas = data.get("datas") or []
         info = datas[0] if datas else {}
         # 余额字段名未完全确认，多候选兜底；单位（分/元）待探测确认。
@@ -412,7 +432,16 @@ class TownGasApiClient:
             if curr is None and last is None:
                 # 该组合无读数，尝试下一个
                 continue
-            return {"currReading": curr, "lastReading": last, "source": label}
+            return {
+                "currReading": curr,
+                "lastReading": last,
+                "source": label,
+                # preCheck 同响应里还带了账户级字段，预付费户尤其有用：
+                # savingSum=充值余额（元）、totalFee=本期气费、chargeType=prepay/postpay
+                "savingSum": datas.get("savingSum"),
+                "totalFee": datas.get("totalFee"),
+                "chargeType": datas.get("chargeType"),
+            }
         return None
 
     async def async_get_user_info(self) -> dict[str, Any]:
@@ -450,22 +479,32 @@ class TownGasApiClient:
                 )
             except Exception as err:  # noqa: BLE001
                 out["preCheck_subsCode"] = f"ERR {err}"
+        # queryHistoryFee / gasFeeBaseinfo 认 subsId（气户标识），与 preCheck 一致；
+        # 传 subsCode+orgCode 会返回「气户标识不能为空」。优先用 subs_id。
+        if subs_id:
+            fee_params: dict[str, Any] = {"subsId": subs_id}
+            bal_params: dict[str, Any] = {"subsId": subs_id}
+        elif subs_code and org_code:
+            fee_params = {
+                "subsCode": subs_code,
+                "orgCode": org_code,
+                "pageIndex": 1,
+                "pageSize": 2,
+            }
+            bal_params = {"subsCode": subs_code, "orgCode": org_code}
+        else:
+            fee_params = bal_params = {}
+        if fee_params:
             try:
                 out["queryHistoryFee"] = await self._cbs_get(
-                    "/charge/queryHistoryFee",
-                    {
-                        "subsCode": subs_code,
-                        "orgCode": org_code,
-                        "pageIndex": 1,
-                        "pageSize": 2,
-                    },
+                    "/charge/queryHistoryFee", fee_params
                 )
             except Exception as err:  # noqa: BLE001
                 out["queryHistoryFee"] = f"ERR {err}"
+        if bal_params:
             try:
                 out["gasFeeBaseinfo"] = await self._cbs_get(
-                    "/charge/gasFeeBaseinfo",
-                    {"subsCode": subs_code, "orgCode": org_code},
+                    "/charge/gasFeeBaseinfo", bal_params
                 )
             except Exception as err:  # noqa: BLE001
                 out["gasFeeBaseinfo"] = f"ERR {err}"

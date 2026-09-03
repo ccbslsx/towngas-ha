@@ -115,13 +115,15 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         except TownGasApiError as err:
             _LOGGER.warning("获取表数失败 %s: %s", subs_id or subs_code, err)
 
-        # 2. 历史账单 / 余额 / 户信息（best-effort，需 subs_code+org_code）。
-        #    vcc-cbs 的字段名与金额单位尚未用真实 token 校准（待 authCode 探测），
-        #    因此全部容错、原始透传，缺字段时传感器显示 unknown 而不是崩溃。
-        if subs_code and org_code:
+        # 2. 历史账单 / 余额 / 户信息（best-effort）。
+        #    vcc-cbs 的 queryHistoryFee / gasFeeBaseinfo 认 subsId（气户标识），与
+        #    preCheck 一致；无 subs_id 时才回退 subsCode+orgCode。字段名与金额
+        #    单位已用真实 token 校准（dump_raw 实测）：余额优先用 preCheck 的
+        #    savingSum（预付费充值余额，单位元），账单接口作兜底。
+        if subs_id or (subs_code and org_code):
             try:
                 result["bills"] = await self.client.async_get_bills(
-                    subs_code, org_code
+                    subs_id, subs_code, org_code
                 )
             except TownGasAuthError:
                 raise
@@ -129,13 +131,14 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 _LOGGER.warning("获取账单列表失败 %s: %s", subs_code, err)
 
             try:
-                result["balance"] = await self.client.async_get_balance(
-                    subs_code, org_code
+                balance_from_api = await self.client.async_get_balance(
+                    subs_id, subs_code, org_code
                 )
             except TownGasAuthError:
                 raise
             except TownGasApiError as err:
-                _LOGGER.warning("获取余额失败 %s: %s", subs_code, err)
+                _LOGGER.warning("获取余额失败 %s: %s", subs_id or subs_code, err)
+                balance_from_api = None
 
             try:
                 result["sub_info"] = await self.client.async_get_sub_info(
@@ -146,14 +149,31 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             except TownGasApiError as err:
                 _LOGGER.warning("获取户信息失败 %s: %s", subs_code, err)
 
-        # 3. 欠费（best-effort）：从账单列表推导，单位待校准（先原值透传）。
-        bills = result.get("bills") or []
-        unpaid_datas = [b for b in bills if _to_float(b.get("totalUnpaidFee"))]
-        raw_arrears = sum(
-            (_to_float(b.get("totalUnpaidFee")) or 0.0) for b in unpaid_datas
-        )
-        result["arrears"] = round(raw_arrears, 2)
-        result["unpaid_count"] = len(unpaid_datas)
+            # 余额：预付费用户的充值余额来自 preCheck.savingSum（最可靠）；
+            # 否则用 gasFeeBaseinfo 的返回值（已用 subsId 调用）。
+            reading = result.get("reading") or {}
+            raw_saving = reading.get("savingSum")
+            if raw_saving not in (None, ""):
+                result["balance"] = _to_float(raw_saving)
+            else:
+                result["balance"] = balance_from_api
+        else:
+            result["balance"] = None
+
+        # 3. 欠费：预付费户不会欠费（余额即充值，不生成账单欠款），直接记 0；
+        #    后付费户从账单列表推导（totalUnpaidFee 之和）。
+        charge_type = (result.get("reading") or {}).get("chargeType")
+        if charge_type == "prepay":
+            result["arrears"] = 0.0
+            result["unpaid_count"] = 0
+        else:
+            bills = result.get("bills") or []
+            unpaid_datas = [b for b in bills if _to_float(b.get("totalUnpaidFee"))]
+            raw_arrears = sum(
+                (_to_float(b.get("totalUnpaidFee")) or 0.0) for b in unpaid_datas
+            )
+            result["arrears"] = round(raw_arrears, 2)
+            result["unpaid_count"] = len(unpaid_datas)
 
         return result
 

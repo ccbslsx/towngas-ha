@@ -262,9 +262,12 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
         if key == "previous_reading":
             return _f(reading.get("lastReading"))
         if key == "bill_amount":
-            # v1.5.0 切换 vcc-cbs 网关：chrgSum 单位（分/元）待探测确认，
-            # 此处先原值透传，锁定字段后统一校准（勿在此 ÷100）。
-            return _f(bill.get("chrgSum"))
+            # 优先用账单的 chrgSum；预付费/无账单时回退 preCheck.totalFee
+            # （预付费户本期气费通常为 0，已包含在读数接口响应里）。
+            amt = _f(bill.get("chrgSum")) if bill else None
+            if amt is None:
+                amt = _f((self._sub_data.get("reading") or {}).get("totalFee"))
+            return amt
         if key == "gas_price":
             price = None
             if self._steps:
