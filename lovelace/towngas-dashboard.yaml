@@ -18,20 +18,15 @@
 #       本期账单金额=ben_qi_zhang_dan_jin_e   用气单价=yong_qi_dan_jie
 #       账户余额=zhang_hu_yu_e   欠费金额=qian_fei_jin_e   账期=zhang_qi
 #
-# 【排版策略 · 兼顾"铺满整屏" + "顺序可控"】
-#   外层 view：panel: false + layout.grid-template-columns: 1fr
-#              → 关掉 panel 居中模式 + 强制单列拉伸铺满整屏
-#   内层 vertical-stack → 保证按指定顺序展示：
-#     1. markdown 头部说明（一行宽）
-#     2. grid: 2 列并排展示两张 glance 概览卡
-#     3. vertical-stack: 3 张图表全宽堆叠
-#   这样做的好处：既铺满整屏（无左右留白），又排版整齐（不随机打散）。
+# 【排版策略 · 双保险】
+#   不再依赖 view-level panel / layout（你之前粘贴可能没生效）。
+#   改为在 cards 内直接用 grid columns: 2 强制 2 列铺满整屏——
+#   无论 view 模式如何、无论是否粘贴了 view-level 属性，2 列结构都会铺满。
+#   view-level panel: false + layout: 1fr 作为额外保险保留（生效时更好）。
 #
-# 【用法】
-#   方式一（独立仪表盘）：设置 → 仪表盘 → + 添加仪表盘 → 从空开始 →
-#           右上角 ⋮ → 原始配置编辑器 → 把本文件整个 views: 段粘进去保存。
-#   方式二（并入现有）：把你现有 dashboard 原始配置里本文件 views: 内的 view 贴进它的 views: 列表。
-#   ⚠️ 关键：必须粘贴整段（含 panel: false 和 layout:），不能只粘贴 cards: 段
+# 【用法 · 关键】
+#   必须把整个 view 段（含 title/path/icon/panel/layout/cards）一次性粘贴，
+#   不能只粘贴 cards: 段（否则 view-level panel / layout 不生效，整页居中留白）。
 # ============================================================
 
 title: 港华燃气
@@ -40,67 +35,70 @@ views:
     path: towngas
     icon: mdi:gas-cylinder
     badges: []
-    # 关掉 panel 模式（默认会居中 + 留白）
+    # 双保险 A：关掉 panel 居中模式
     panel: false
-    # 强制单列拉伸铺满整屏（覆盖默认 auto-fill 多列）
+    # 双保险 B：view 强制单列拉伸铺满（仅在 panel: false 时生效）
     layout:
       grid-template-columns: 1fr
       grid-template-rows: auto
     cards:
 
-      # ---------- 顶层 vertical-stack：保证内部按指定顺序展示 ----------
-      - type: vertical-stack
+      # ============================================================
+      # 双保险 C：顶层直接用 grid columns: 2 强制 2 列铺满
+      # 无论 view 模式如何、是否粘贴了 view-level，都会按 2 列铺满。
+      # ============================================================
+      - type: grid
+        columns: 2
+        square: false
         cards:
 
-          # ---------- 1. 头部说明（整行宽度） ----------
-          - type: markdown
-            content: |
-              # 🔥 港华燃气 · 用气与账单看板
-              数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
-              所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
-              月度柱状图即为 **历史比对**。
-
-          # ---------- 2. 两户号概览（grid 2 列 · 横向并排对齐） ----------
-          - type: grid
-            columns: 2
-            square: false
-            cards:
-              - type: glance
-                title: 概览 · 1500185660
-                columns: 4
-                show_state: true
-                show_name: true
-                show_icon: true
-                entities:
-                  - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-                  - sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-                  - sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
-                  - sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-                  - sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-                  - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-                  - sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-                  - sensor.gang_hua_ran_qi_1500185660_zhang_qi
-              - type: glance
-                title: 概览 · 1500185695
-                columns: 4
-                show_state: true
-                show_name: true
-                show_icon: true
-                entities:
-                  - sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-                  - sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
-                  - sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
-                  - sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-                  - sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
-                  - sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-                  - sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-                  - sensor.gang_hua_ran_qi_1500185695_zhang_qi
-
-          # ---------- 3. 三张图表（全宽堆叠 · 顺序固定） ----------
+          # ---------- 左列：markdown + 2 glance 并排 + chart 1 ----------
           - type: vertical-stack
             cards:
 
-              # ---- 累计表数对比（柱状） ----
+              # 头部说明
+              - type: markdown
+                content: |
+                  # 🔥 港华燃气 · 用气与账单看板
+                  数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
+                  所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
+                  月度柱状图即为 **历史比对**。
+
+              # 两户号概览（并排 · 横向对齐）
+              - type: horizontal-stack
+                cards:
+                  - type: glance
+                    title: 概览 · 1500185660
+                    columns: 4
+                    show_state: true
+                    show_name: true
+                    show_icon: true
+                    entities:
+                      - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                      - sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+                      - sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+                      - sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+                      - sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
+                      - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+                      - sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+                      - sensor.gang_hua_ran_qi_1500185660_zhang_qi
+                  - type: glance
+                    title: 概览 · 1500185695
+                    columns: 4
+                    show_state: true
+                    show_name: true
+                    show_icon: true
+                    entities:
+                      - sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                      - sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+                      - sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+                      - sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+                      - sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
+                      - sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+                      - sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+                      - sensor.gang_hua_ran_qi_1500185695_zhang_qi
+
+              # 第 1 张图（累计表数对比）
               - type: custom:apexcharts-card
                 graph_span: "13month"
                 header:
@@ -116,7 +114,11 @@ views:
                     type: column
                     color: "#2A9D8F"
 
-              # ---- 月度用气对比（历史比对） ----
+          # ---------- 右列：chart 2 + chart 3 ----------
+          - type: vertical-stack
+            cards:
+
+              # 第 2 张图（月度用气对比 · 历史比对）
               - type: custom:apexcharts-card
                 graph_span: "13month"
                 header:
@@ -138,7 +140,7 @@ views:
                       func: avg
                       duration: 1month
 
-              # ---- 账单金额趋势 ----
+              # 第 3 张图（账单金额趋势）
               - type: custom:apexcharts-card
                 graph_span: "13month"
                 header:
