@@ -1,21 +1,26 @@
 # Towngas 港华燃气 · Home Assistant 自定义集成
 
-从港华燃气「网上营业厅」（默认马鞍山 `https://maanshan.towngasvcc.com/`，其他城市营业厅地址也可在配置时修改）拉取账单数据，为每个燃气户号创建一个设备，包含以下传感器：
+从港华燃气「微信中央网关」（`https://weixin.towngasvcc.com`，VCC 网关）拉取燃气读数 / 账单 / 余额数据，为每个燃气户号创建一个设备，包含以下传感器：
 
 | 传感器 | 说明 | 单位 |
 |---|---|---|
 | 本期用气 | 最近一个账期的用气量（附阶梯明细属性） | m³ |
 | 本期表数 | 最近一次抄表读数 | m³ |
 | 上期表数 | 上一次抄表读数 | m³ |
-| 本期账单金额 | 最近账期金额（附违约金 / 余额抵扣等属性） | ¥ |
-| 用气单价 | 第一阶梯单价 | ¥/m³ |
-| 账户余额 | 账户剩余金额 | ¥ |
-| 欠费金额 | 当前欠费总额（附欠费笔数属性） | ¥ |
-| 账期 | 最近账期（如 2026-07） | - |
+| 本期账单金额 | 最近账期金额（附违约金 / 余额抵扣等属性） | ¥（best‑effort，待校准） |
+| 用气单价 | 第一阶梯单价 | ¥/m³（best‑effort，待校准） |
+| 账户余额 | 账户剩余金额 | ¥（best‑effort，待校准） |
+| 欠费金额 | 当前欠费总额（附欠费笔数属性） | ¥（best‑effort，待校准） |
+| 账期 | 最近账期（如 2026‑07） | - |
+
+> **v1.5.0 重大变更（解决"token 每几天就过期"）**
+> 旧版（v1.4.x）走「网上营业厅」`maanshan.towngasvcc.com` 的 openapi，其 access_token 仅约 899 秒、refresh_token 天级就失效，导致每隔几天就要重粘 token。
+> v1.5.0 改为走**微信中央 VCC 网关**：微信 OAuth 登录后 `access_token` 寿命 **7200 秒**、`refresh_token` 天级（实测稳定 1 周+），集成每 30 分钟自动静默刷新 → **登录一次、长期免手动**。
+> 因此鉴权与数据层整体迁移到 `weixin.towngasvcc.com`，旧营业厅 token **与新网关不互通**，请勿再复制营业厅网页本地存储里的 token。
 
 ## 安装
 
-### 方式一：手动安装（HACS 用户可用方式二）
+### 方式一：手动安装
 
 1. 把 `custom_components/towngas` 整个文件夹复制到 HA 配置目录：
 
@@ -74,36 +79,49 @@ git push -u origin main
 1. HACS → 集成 → 右下角 **浏览 (Explore)** / 搜索 **Towngas 港华燃气**；
 2. 点开 → **下载 (Download)**，等待完成；
 3. 重启 Home Assistant；
-4. 按上方「配置」章节添加集成、粘贴 token、勾选户号。
+4. 按下方「配置」章节添加集成。
 
 > HACS 自定义仓库方式**无需**把集成提交到 HACS 官方默认列表，自己用完全够；日后 `git push` 新版本后，HACS 会提示可更新，一键升级即可。
->
-> 若想进 HACS 默认仓库（别人也能直接搜到），需向 `hacs/default` 提交 PR，门槛更高，个人使用不推荐。
 
 ## 配置
 
-### 第 1 步：获取 Token（关键步骤）
+配置为**两步**，全程在手机微信里登录，无需电脑浏览器、无需挖本地存储：
 
-营业厅登录使用手机号 + 短信验证码（SSO），无法在 HA 里自动完成，因此采用「浏览器登录后复制 token」的方式：
+### 第 1 步：微信登录获取授权码（关键步骤）
 
-1. 电脑浏览器打开 `https://maanshan.towngasvcc.com/`，用手机号 + 短信验证码登录；
-2. 登录成功后按 **F12** 打开开发者工具；
-3. 切到 **应用 (Application) → 本地存储 (Local Storage) → `https://maanshan.towngasvcc.com`**；
-4. 找到键 **`token`**，复制它的值，形如：
+1. 在**手机微信**里打开下面的登录链接（集成也会在配置界面里给出同样的链接）：
 
-   ```json
-   {"access_token":"8a1b2c3d-....","refresh_token":"9z8y7x...."}
+   ```
+   https://weixin.towngasvcc.com/vcc-oauth/oauth/authorize2/union?clientid=pe92a8wechatMA0105&redirectUri=https://weixin.towngasvcc.com/h5-gas/
    ```
 
-5. 把整段 JSON 粘贴到集成配置里即可（只粘贴 access_token 的值也可以）。
+2. 微信内登录你的港华燃气账户；登录成功会自动**跳回**并带上 `?code=` 参数，地址栏形如：
 
-> Token 有效期由服务端决定，过期后集成的传感器会变成不可用，并在 HA 的「需要 attention 的配置项」中提示重新认证，按提示粘贴新 token 即可。
+   ```
+   https://weixin.towngasvcc.com/h5-gas/?code=GMlyuHFb0K&...
+   ```
 
-### 第 2 步：添加集成
+3. **整段复制这个带 `?code=` 的回跳地址**（集成会自动从中抽出 `code`）。
 
-1. HA → 设置 → 设备与服务 → 添加集成 → 搜索 **Towngas** 或 **港华燃气**；
-2. 粘贴 token（营业厅地址已预填马鞍山，其他城市可修改）；
-3. 集成会列出账号下绑定的所有户号（多选），确认后每个户号生成一个设备。
+4. 在 HA 添加集成时，把上面整段网址**粘贴到第 1 步的输入框**（该框历史命名为 `access_token`，但本版只认你贴的登录码 / 回跳网址，也兼容「仅 code」或「完整 token JSON」，普通用户用回跳网址即可）。集成会拿 `code` 自动换发 `access_token` + `refresh_token`。
+
+> **为什么界面还写着 access_token / "支持整个 JSON 或仅 access_token"？**
+> 那是字段的历史命名与「兼容旧 token JSON」的兜底说明，**你不需要管它**。
+> 你只需贴微信登录后的 `?code=` 回跳网址即可；集成会自己换发并定时刷新 token。
+> （仅当你手头已经有一段 *微信中央网关* 的 token JSON 时，才走那个兜底，一般用户用不到。）
+
+> Token 本身有效期约 2 小时，但 `refresh_token` 可稳定多日，集成每 30 分钟自动静默刷新，无需频繁手动操作。只有当 `refresh_token` 本身也失效时，才会提示重新认证——此时重新走一遍上面的微信登录链接即可。
+
+### 第 2 步：手动填写燃气户号
+
+微信中央网关的户号无法在集成内自动发现（自动发现接口需要服务端才认得的机构参数），故需手动填写：
+
+- **户号标识 `subs_id`**（必填）：用于读取本期表数（核心传感器 `preCheck(subsId)`）。
+- **户号 `subs_code` / 组织机构代码 `org_code`**（选填）：填写后才会拉取历史账单与余额；留空则账单类传感器保持空（best‑effort）。
+
+户号可在 **港华燃气微信小程序 / 公众号 →「我的」→「我的户号 / 户号管理」** 中查看；每月的账单推送（微信服务消息 / 短信）里印的户号同样可用。
+
+> 填完 `subs_id` 保存后，先观察 `本期表数` / `上期表数` 传感器：若能显示出类似抄表读数的数值，说明 `subs_id` 正确；若长期 `unknown`，换另一个户号试试，或用下方「`towngas.dump_raw` 服务」自查。
 
 ### 配置项
 
@@ -111,12 +129,18 @@ HA → 设置 → 设备与服务 → Towngas → 配置（右上角「配置」
 
 | 配置项 | 说明 | 允许范围 | 默认 |
 |---|---|---|---|
-| `scan_interval`（数据刷新间隔） | 多久轮询一次账单/余额/欠费 | 60–86400 秒 | 21600 秒（6 小时） |
-| `token_refresh_interval`（Token 刷新间隔） | 多久检查一次 token 是否仍有效 | 300–7140 秒 | 1800 秒（30 分钟） |
+| `scan_interval`（数据刷新间隔） | 多久轮询一次读数/账单/余额 | 60–86400 秒 | 21600 秒（6 小时） |
+| `token_refresh_interval`（Token 刷新间隔） | 多久检查/刷新一次 token | 300–7200 秒 | 1800 秒（30 分钟） |
 
 > - 间隔都用**秒**为单位。账单数据按月更新，数据刷新无需太频繁，默认 6 小时足够。
-> - Token 刷新间隔用于定时做 token 健康检查。集成内置了**真实的 token 自动续期**（复用平台级 oauth 接口 + 签名算法）：当 token 临近过期时会自动静默刷新，多数情况下你无需再手动粘贴 token；只有当 `refresh_token` 本身也已失效时，才会弹出「重新认证」让你粘贴新的 token。
+> - 集成内置**真实的 token 自动续期**（微信 OAuth `refreshToken` 接口 + 签名算法）：token 临近过期时自动静默刷新，多数情况下你无需再手动操作；只有 `refresh_token` 失效时才弹「重新认证」，让你重新走微信登录链接。
 > - 修改配置项后会自动重载集成。
+
+## 校准账单 / 余额字段（可选，待办）
+
+读数（本期/上期表数）已对齐稳定可用的模型，可直接出数。但**账单金额、余额、欠费的单位（分/元）与 `queryHistoryFee` / `gasFeeBaseinfo` 的真实字段名**尚未用真实数据校准，目前为原值透传（best‑effort）。
+
+若想让账单类传感器精确出数，配置好后调用开发者工具 → 服务 → **`towngas.dump_raw`**（可对全部户号跑），把返回的原始 JSON 贴回，即可据此锁定字段名与金额换算（如 ÷100）。
 
 ## 系统维护窗口
 
@@ -127,23 +151,36 @@ HA → 设置 → 设备与服务 → Towngas → 配置（右上角「配置」
 
 ## 工作原理
 
-集成直接调用网上营业厅前端使用的 openapi（逆向自其前端代码）：
+集成直接调用港华燃气微信中央 VCC 网关（逆向自其 H5 前端 `weixin.towngasvcc.com/h5-gas`，并对照杭州参考版 `palafin02back/hztowngas`）：
+
+### 鉴权（微信 OAuth，`/vcc-oauth/oauth/authorize2/...`）
 
 | 用途 | 接口 |
 |---|---|
-| 绑定户号列表 | `GET /openapi/uv1/user/queryBindSubsLimitServer` |
-| 账单列表 | `GET /openapi/uv1/bill/queryBills` |
-| 账户余额 | `GET /openapi/uv1/acct/queryAcctRes` |
-| 欠费 | `GET /openapi/uv1/bill/queryUnpaidBills` |
-| 户信息 | `GET /openapi/uv1/subs/querySubs` |
+| 登录授权入口（手机微信打开） | `GET /oauth/authorize2/union?clientid=...&redirectUri=...` |
+| 用 `code` 换发 token | `POST /oauth/authorize2/accessToekn?authCode=<code>` |
+| 刷新 token | `POST /oauth/authorize2/refreshToken?timestamp=<ms>&refreshToken=<rt>&sign=<sign>` |
 
-请求格式：`?seq=<接口码+时间戳+随机数>&token=<access_token>&client_id=<web客户端id>`。
+- `access_token` 寿命 **7200 秒**；`refresh_token` 天级、可稳定多日。
+- 刷新签名：`sign = MD5(排序后的 key+value 拼接 + SALT "hbasesoft.com-prod").upper()`。
+
+### 数据（`/nv1/vcc-cbs/*`，GET，带 `Authorization: Bearer <access_token>` + `timestamp`+`sign`）
+
+| 用途 | 接口 |
+|---|---|
+| 本期表数（读数，核心） | `GET /charge/preCheck`（参数 `subsId`，回退 `subsCode`+`orgCode`） |
+| 历史账单 | `GET /charge/queryHistoryFee` |
+| 账户余额 | `GET /charge/gasFeeBaseinfo` |
+| 登录存活校验 | `GET /usersubs/getLoginUserInfo` |
+
+> 注意：营业厅网关（`maanshan.towngasvcc.com/openapi/uv1`）与微信中央网关（本集成）的 token **不互通**，请勿把营业厅网页本地存储里的 token 贴进来——会被拒（20001）。
 
 ## 常见问题
 
-- **提示 token 无效/过期**：正常情况下集成会自动续期 token，无需任何操作。只有当 `refresh_token` 也失效时才需要重新登录营业厅，按第 1 步复制新 token，点集成里的「重新认证」。
-- **其他城市港华**：营业厅前端全国共用一套代码，理论上把「营业厅地址」改成对应城市的域名（如 `https://xxx.towngasvcc.com/`）即可，未逐一验证。
-- **数据何时更新**：抄表/出账后营业厅数据更新，集成按设定的间隔轮询。
+- **提示 token 无效/过期**：正常情况下集成会自动续期 token，无需任何操作。只有当 `refresh_token` 也失效时才需要重新在微信里打开登录链接，把新的 `?code=` 回跳网址贴到「重新认证」。
+- **找不到户号（subs_id）**：户号在港华燃气微信小程序 / 公众号「我的户号」里查看；或看每月账单推送里的户号。集成无法自动发现（机构参数服务端才认得）。
+- **账单/余额显示不对或为空**：读数（表数）是稳的；账单类传感器单位与字段名仍待真实数据校准，可跑 `towngas.dump_raw` 把原始 JSON 贴回以收口。
+- **数据何时更新**：抄表/出账后网关数据更新，集成按设定的间隔轮询。
 
 ## 发版（维护者）
 
@@ -151,9 +188,9 @@ HA → 设置 → 设备与服务 → Towngas → 配置（右上角「配置」
 
 ```bash
 # 1. 本地提交改动
-git add -A && git commit -m "v1.0.x: ..."
-# 2. 打 tag 推送（tag 名必须以 v 开头，如 v1.0.8）
-git tag v1.0.8
+git add -A && git commit -m "v1.5.0: ..."
+# 2. 打 tag 推送（tag 名必须以 v 开头，如 v1.5.0）
+git tag v1.5.0
 git push && git push --tags
 ```
 

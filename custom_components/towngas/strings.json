@@ -5,7 +5,7 @@
         "title": "港华燃气（Towngas）",
         "description": "请先在微信中打开登录链接完成授权：\n1. 复制下面的「微信登录链接」，在手机微信里打开；\n2. 微信内登录港华燃气账户，登录成功会自动跳回并带上 ?code= 参数；\n3. 把跳转后地址栏里整段带 ?code= 的网址复制粘贴到下面，集成会自动换发 token。\n\n微信登录链接：{wechat_login_url}\n\n该 token 本身有效期约 2 小时，但 refresh_token 可稳定多日，集成每 30 分钟自动静默刷新，无需频繁手动操作。{detail}",
         "data": {
-          "access_token": "微信登录后地址栏里的 ?code= 网址 / 授权码（或完整 token JSON）"
+          "access_token": "微信登录后回跳地址里带 ?code= 的整段网址（或仅 code；也兼容旧 token JSON，一般不用）"
         }
       },
       "subs": {
@@ -21,7 +21,7 @@
         "title": "Token 已过期",
         "description": "token 已失效。请重新在微信里打开下方登录链接登录，把跳回地址栏里带 ?code= 的整段网址粘贴到下面，集成会自动换发新 token。{detail}",
         "data": {
-          "access_token": "微信登录后地址栏 ?code= 网址 / 授权码"
+          "access_token": "微信登录后回跳地址里带 ?code= 的整段网址（或仅 code）"
         }
       }
     },
