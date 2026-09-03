@@ -32,80 +32,81 @@ views:
     badges: []
     cards:
 
-      # ---------- 1. 头部说明（整行宽度） ----------
-      - type: markdown
-        content: |
-          # 🔥 港华燃气 · 用气与账单看板
-          数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
-          所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
-          月度柱状图即为 **历史比对**。
-
-      # ---------- 2. 两户号概览（并排 · entities 卡 + 图标） ----------
-      - type: horizontal-stack
-        cards:
-          - type: entities
-            title: 概览 · 1500185660
-            show_header_toggle: false
-            entities:
-              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-                name: 本期用气
-                icon: mdi:fire
-              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-                name: 本期表数
-                icon: mdi:gauge
-              - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
-                name: 上期表数
-                icon: mdi:gauge-low
-              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-                name: 本期账单
-                icon: mdi:receipt-text
-              - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-                name: 用气单价
-                icon: mdi:currency-cny
-              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-                name: 账户余额
-                icon: mdi:wallet
-              - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-                name: 欠费金额
-                icon: mdi:cash-remove
-              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
-                name: 当前账期
-                icon: mdi:calendar
-
-          - type: entities
-            title: 概览 · 1500185695
-            show_header_toggle: false
-            entities:
-              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-                name: 本期用气
-                icon: mdi:fire
-              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
-                name: 本期表数
-                icon: mdi:gauge
-              - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
-                name: 上期表数
-                icon: mdi:gauge-low
-              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-                name: 本期账单
-                icon: mdi:receipt-text
-              - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
-                name: 用气单价
-                icon: mdi:currency-cny
-              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-                name: 账户余额
-                icon: mdi:wallet
-              - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-                name: 欠费金额
-                icon: mdi:cash-remove
-              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
-                name: 当前账期
-                icon: mdi:calendar
-
-      # ---------- 3. 主图表（vertical-stack · 全宽堆叠 · 窄列最易读） ----------
+      # ---------- 顶层垂直栈（强制 1 列布局 · 解决 panel 模式自动 2 列造成的左右不对称） ----------
       - type: vertical-stack
         cards:
 
-          # ---- 用气量与累计表数趋势（仅累计对比 · 2 户号） ----
+          # ---------- 1. 头部说明（整行宽度） ----------
+          - type: markdown
+            content: |
+              # 🔥 港华燃气 · 用气与账单看板
+              数据来源：微信中央 VCC 网关，默认每 6 小时刷新一次。
+              所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
+              月度柱状图即为 **历史比对**。
+
+          # ---------- 2. 两户号概览（并排 · entities 卡 + 图标） ----------
+          - type: horizontal-stack
+            cards:
+              - type: entities
+                title: 概览 · 1500185660
+                show_header_toggle: false
+                entities:
+                  - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                    name: 本期用气
+                    icon: mdi:fire
+                  - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+                    name: 本期表数
+                    icon: mdi:gauge
+                  - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+                    name: 上期表数
+                    icon: mdi:gauge-low
+                  - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+                    name: 本期账单
+                    icon: mdi:receipt-text
+                  - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
+                    name: 用气单价
+                    icon: mdi:currency-cny
+                  - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+                    name: 账户余额
+                    icon: mdi:wallet
+                  - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+                    name: 欠费金额
+                    icon: mdi:cash-remove
+                  - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
+                    name: 当前账期
+                    icon: mdi:calendar
+
+              - type: entities
+                title: 概览 · 1500185695
+                show_header_toggle: false
+                entities:
+                  - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                    name: 本期用气
+                    icon: mdi:fire
+                  - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+                    name: 本期表数
+                    icon: mdi:gauge
+                  - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+                    name: 上期表数
+                    icon: mdi:gauge-low
+                  - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+                    name: 本期账单
+                    icon: mdi:receipt-text
+                  - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
+                    name: 用气单价
+                    icon: mdi:currency-cny
+                  - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+                    name: 账户余额
+                    icon: mdi:wallet
+                  - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+                    name: 欠费金额
+                    icon: mdi:cash-remove
+                  - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
+                    name: 当前账期
+                    icon: mdi:calendar
+
+          # ---------- 3. 主图表（3 张全宽 · 全部由最外层 vertical-stack 强制单列） ----------
+          # ---- 累计表数对比（柱状 · 2 户号） ----
           - type: custom:apexcharts-card
             graph_span: "13month"
             header:
@@ -114,16 +115,12 @@ views:
             series:
               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
                 name: "累计表数 1500185660"
-                type: line
+                type: column
                 color: "#E63946"
-                stroke_width: 3
-                curve: smooth
               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
                 name: "累计表数 1500185695"
-                type: line
+                type: column
                 color: "#2A9D8F"
-                stroke_width: 3
-                curve: smooth
 
           # ---- 月度用气对比（历史比对核心） ----
           - type: custom:apexcharts-card
