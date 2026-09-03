@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
@@ -181,7 +181,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         out[label] = f"ERR {err}"
             return out
 
-        hass.services.async_register(DOMAIN, SERVICE_DUMP_RAW, _handle_dump_raw)
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DUMP_RAW,
+            _handle_dump_raw,
+            # 必须声明支持响应，否则 HA 把它当"只写动作"——看不到返回值。
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 

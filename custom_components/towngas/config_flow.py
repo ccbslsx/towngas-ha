@@ -403,14 +403,16 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> TownGasOptionsFlow:
-        return TownGasOptionsFlow(config_entry)
+        # 新版 HA 的 OptionsFlow.config_entry 是只读 property
+        # 由框架通过 flow.handler 自动绑定，不能在 __init__ 里赋值。
+        # 这里只 new 出实例，后续 self.config_entry 由 HA 注入。
+        return TownGasOptionsFlow()
 
 
 class TownGasOptionsFlow(config_entries.OptionsFlow):
     """Options flow: update scan / token-refresh intervals."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    # 不写 __init__，让基类走默认（新版 HA 强制 self.config_entry 只读）。
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
