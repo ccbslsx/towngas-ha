@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +16,8 @@ from homeassistant.util import dt as dt_util
 
 from .api import TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
+    CONF_ACCESS_TOKEN,
+    CONF_REFRESH_TOKEN,
     CONF_TOKEN_EXPIRES_AT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
@@ -61,6 +64,14 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         interval_seconds = entry.options.get(
             OPT_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         )
+        self._scan_interval = interval_seconds
+        self._token_refresh_interval = entry.options.get(
+            OPT_TOKEN_REFRESH_INTERVAL, DEFAULT_TOKEN_REFRESH_INTERVAL
+        )
+        # 供传感器展示「下次刷新倒计时」等可观测信息
+        self.last_token_refresh: float | None = None
+        self.last_token_refresh_ok: bool | None = None
+        self._last_update_ts: float | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -81,6 +92,12 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             "arrears": None,
             "unpaid_count": 0,
         }
+
+        # 每次拉取前先保活：确保本户号所有接口调用都使用新鲜 token
+        # （参考杭州版 _cbs_get 内 ensure_token() 的思路，避免多户号逐个拉取
+        #  中途 token 过期导致个别接口返回 20001）。即便此处刷新失败，下方
+        #  各 _get 仍会在遇 20001 时就地刷新重试一次。
+        await self.client.async_refresh_if_near_expiry()
 
         # 1. Bill history (contains readings / usage / amounts)
         try:
@@ -172,6 +189,7 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         data: dict[str, dict[str, Any]] = {}
         for sub, res in zip(self.subscriptions, results):
             data[f"{sub['org_code']}_{sub['subs_code']}"] = res
+        self._last_update_ts = time.time()
         return data
 
     @staticmethod
@@ -203,6 +221,8 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if self.client.tokens.is_near_expiry():
             if await self.client.async_try_refresh_token():
                 self._persist_tokens()
+                self.last_token_refresh = time.time()
+                self.last_token_refresh_ok = True
                 _LOGGER.info("港华燃气 token 主动刷新成功")
                 return
             # 临近过期但刷新失败 → 落到下面的校验分支决定是否需要 reauth
@@ -213,9 +233,12 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         except TownGasAuthError:
             if await self.client.async_try_refresh_token():
                 self._persist_tokens()
+                self.last_token_refresh = time.time()
+                self.last_token_refresh_ok = True
                 _LOGGER.info("港华燃气 token 过期后刷新成功")
                 return
             _LOGGER.warning("港华燃气 token 已失效且刷新失败，触发重新认证流程")
+            self.last_token_refresh_ok = False
             try:
                 # HA 2024.2+ 的推荐写法：直接传 ConfigEntry，由框架创建 reauth 流。
                 # （旧版 async_start_reauth(flow_id) 已移除，调用会抛 AttributeError。）
@@ -235,3 +258,27 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             new_data[CONF_REFRESH_TOKEN] = self.client.tokens.refresh_token
         new_data[CONF_TOKEN_EXPIRES_AT] = self.client.tokens.expires_at
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+
+    # ------------------------------------------------------------------
+    # 可观测性：下次刷新时间（供传感器展示「倒计时」）
+    # ------------------------------------------------------------------
+    def next_token_refresh_at(self) -> datetime | None:
+        """下次 token 健康检查（保活）的大致时间（UTC）。
+
+        基于最近一次刷新成功时间 + 间隔推算；若从未成功刷新则回退为
+        启动时间 + 间隔。仅用于展示，不影响实际调度。
+        """
+        if not self._token_refresh_interval:
+            return None
+        base = self.last_token_refresh or time.time()
+        return datetime.fromtimestamp(
+            base + self._token_refresh_interval, tz=timezone.utc
+        )
+
+    def next_data_refresh_at(self) -> datetime | None:
+        """下次数据刷新的大致时间（UTC），基于最近一次成功更新 + 扫描间隔。"""
+        if self._last_update_ts is None:
+            return None
+        return datetime.fromtimestamp(
+            self._last_update_ts + self._scan_interval, tz=timezone.utc
+        )

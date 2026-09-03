@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import TownGasCoordinator
@@ -170,6 +171,33 @@ class TownGasTokenEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
             # 暴露最近一次刷新失败的原因，避免用户只看到"又过期了"无从排查
             return tokens.last_refresh_error or "正常"
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """可观测信息：上次刷新、下次刷新倒计时，便于肉眼确认自动刷新在跑。"""
+        attrs: dict[str, Any] = {}
+        coord = self.coordinator
+        if coord.last_token_refresh:
+            attrs["last_token_refresh"] = datetime.fromtimestamp(
+                coord.last_token_refresh
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        if coord.last_token_refresh_ok is True:
+            attrs["last_token_refresh_ok"] = "成功"
+        elif coord.last_token_refresh_ok is False:
+            attrs["last_token_refresh_ok"] = "失败"
+        else:
+            attrs["last_token_refresh_ok"] = "未知"
+        attrs["refresh_enabled"] = bool(coord._token_refresh_interval)
+        now = dt_util.utcnow()
+        nt = coord.next_token_refresh_at()
+        nd = coord.next_data_refresh_at()
+        if nt is not None:
+            attrs["next_token_refresh"] = nt.isoformat()
+            attrs["next_token_refresh_in"] = f"{max(int((nt - now).total_seconds()), 0)}s"
+        if nd is not None:
+            attrs["next_data_refresh"] = nd.isoformat()
+            attrs["next_data_refresh_in"] = f"{max(int((nd - now).total_seconds()), 0)}s"
+        return attrs
 
 
 class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):

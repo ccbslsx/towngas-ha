@@ -141,6 +141,7 @@ class TownGasApiClient:
         params: dict[str, Any] | None = None,
         *,
         authenticated: bool = True,
+        _retried: bool = False,
     ) -> dict[str, Any]:
         url = self._build_url(code, path, params, authenticated=authenticated)
         _LOGGER.debug("GET %s", url)
@@ -171,6 +172,15 @@ class TownGasApiClient:
         if result_code is not None:
             rc = str(result_code)
             if rc in AUTH_ERROR_CODES:
+                # 鉴权失败（如 20001 token 过期）：先用 refresh_token 换发新
+                # access_token，成功则就地用新 token 重发本次请求（参考杭州版
+                # 「401 后用全新时间戳/签名重签 URL 重试」的关键修复）。仅重试
+                # 一次，避免死循环；仍鉴权失败才上抛，由上层触发 reauth。
+                if not _retried and await self.async_try_refresh_token():
+                    return await self._get(
+                        code, path, params,
+                        authenticated=authenticated, _retried=True,
+                    )
                 raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
             if rc != "0":
                 raise TownGasApiError(

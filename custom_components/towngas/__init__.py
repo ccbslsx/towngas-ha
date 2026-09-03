@@ -91,6 +91,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # 启动即做一次 token 健康检查：若 token 在重启时已近过期，立即刷新，
+    # 避免等待一个完整 interval 期间 token 过期而直接弹 reauth（参考杭州版
+    # 首刷提前到「剩余寿命-60s」的思路）。后台执行，不阻塞 setup。
+    hass.async_create_task(coordinator.async_token_health_check())
+
     # 注册调试/手动服务（仅注册一次，跨所有 entry 共用）。
     # 用途：手动触发一次真实 token 刷新，用于验证「过期自动刷新」机制是否工作，
     #       或在不想等自动周期时立即续期。刷新成功后 token 传感器状态会同步更新。

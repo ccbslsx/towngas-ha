@@ -6,7 +6,7 @@ import logging
 from typing import Final
 
 # 集成版本（与 manifest.json 保持一致；仅用于启动日志，方便确认 HA 里实际跑的是哪版）。
-VERSION: Final = "1.3.0"
+VERSION: Final = "1.4.0"
 
 DOMAIN: Final = "towngas"
 LOGGER: Final = logging.getLogger(__package__)
