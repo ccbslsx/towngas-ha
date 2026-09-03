@@ -18,9 +18,6 @@
 #       本期表数=ben_qi_biao_shu   本期用气=ben_qi_yong_qi   上期表数=shang_qi_biao_shu
 #       本期账单金额=ben_qi_zhang_dan_jin_e   用气单价=yong_qi_dan_jie
 #       账户余额=zhang_hu_yu_e   欠费金额=qian_fei_jin_e   账期=zhang_qi
-#   若某图表空白，说明该传感器的拼音拼写与上面不同 —— 到「开发者工具 → 状态」搜
-#   gang_hua_ran_qi，把对应实体 id 替换进本文件即可。
-#   概览卡用了 auto-entities，无论 id 长啥样都会自动出现。
 #
 # 【用法】
 #   方式一（独立仪表盘）：设置 → 仪表盘 → + 添加仪表盘 → 从空开始 →
@@ -36,7 +33,7 @@ views:
     badges: []
     cards:
 
-      # ---------- 头部说明 ----------
+      # ---------- 头部说明（整行宽度） ----------
       - type: markdown
         content: |
           # 🔥 港华燃气 · 用气与账单看板
@@ -44,178 +41,251 @@ views:
           所有「本期」数值取自最近一个抄表账期（如 `2026-08`）。
           月度柱状图即为 **历史比对**；最小/平均/最大折线为 **统计分析**。
 
-      # ---------- 概览（每个户号一张 glance，无 HACS 依赖） ----------
-      - type: glance
-        title: 概览 · 1500185660
-        columns: 4
-        show_state: true
-        entities:
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-          - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
-      - type: glance
-        title: 概览 · 1500185695
-        columns: 4
-        show_state: true
-        entities:
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
-          - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
+      # ---------- 两户号概览（并排 · entities 卡 + 图标，比 glance 清晰） ----------
+      - type: horizontal-stack
+        cards:
+          - type: entities
+            title: 概览 · 1500185660
+            show_header_toggle: false
+            entities:
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                name: 本期用气
+                icon: mdi:fire
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+                name: 本期表数
+                icon: mdi:gauge
+              - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+                name: 上期表数
+                icon: mdi:gauge-low
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+                name: 本期账单
+                icon: mdi:receipt-text
+              - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
+                name: 用气单价
+                icon: mdi:currency-cny
+              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+                name: 账户余额
+                icon: mdi:wallet
+              - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+                name: 欠费金额
+                icon: mdi:cash-remove
+              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
+                name: 当前账期
+                icon: mdi:calendar
 
-      # ---------- 用气量与累计表数趋势（折线 + 柱） ----------
-      - type: custom:apexcharts-card
-        graph_span: "13month"
-        header:
-          show: true
-          title: 用气量与累计表数趋势
-        series:
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-            name: 累计表数 1500185660
-            type: line
-            color: "#E63946"
-            stroke_width: 3
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-            name: 本期用气 1500185660
-            type: column
-            color: "#457B9D"
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
-            name: 累计表数 1500185695
-            type: line
-            color: "#F4A261"
-            stroke_width: 3
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-            name: 本期用气 1500185695
-            type: column
-            color: "#2A9D8F"
+          - type: entities
+            title: 概览 · 1500185695
+            show_header_toggle: false
+            entities:
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                name: 本期用气
+                icon: mdi:fire
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+                name: 本期表数
+                icon: mdi:gauge
+              - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+                name: 上期表数
+                icon: mdi:gauge-low
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+                name: 本期账单
+                icon: mdi:receipt-text
+              - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
+                name: 用气单价
+                icon: mdi:currency-cny
+              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+                name: 账户余额
+                icon: mdi:wallet
+              - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+                name: 欠费金额
+                icon: mdi:cash-remove
+              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
+                name: 当前账期
+                icon: mdi:calendar
 
-      # ---------- 月度用气对比（历史比对核心） ----------
-      - type: custom:apexcharts-card
-        graph_span: "13month"
-        header:
-          show: true
-          title: 月度用气对比（历史比对）
-        series:
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-            name: "1500185660"
-            type: column
-            color: "#457B9D"
-            group_by:
-              func: avg
-              duration: 1month
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-            name: "1500185695"
-            type: column
-            color: "#2A9D8F"
-            group_by:
-              func: avg
-              duration: 1month
+      # ---------- 关键数字（stat 卡 · 带 sparkline 趋势线，原生卡） ----------
+      - type: horizontal-stack
+        cards:
+          - type: statistic
+            name: 本期用气·1500185660
+            icon: mdi:fire
+            entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+            period: month
+          - type: statistic
+            name: 本期用气·1500185695
+            icon: mdi:fire
+            entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+            period: month
+          - type: statistic
+            name: 账户余额·1500185660
+            icon: mdi:wallet
+            entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+          - type: statistic
+            name: 账户余额·1500185695
+            icon: mdi:wallet
+            entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
 
-      # ---------- 账单金额趋势 ----------
-      - type: custom:apexcharts-card
-        graph_span: "13month"
-        header:
-          show: true
-          title: 账单金额趋势（¥）
-        series:
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-            name: 账单 1500185660
-            type: area
-            color: "#E63946"
-            opacity: 0.35
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-            name: 账单 1500185695
-            type: area
-            color: "#2A9D8F"
-            opacity: 0.35
+      # ---------- 主图表区（2 列 grid，自动填满） ----------
+      - type: grid
+        columns: 2
+        square: false
+        cards:
 
-      # ---------- 用气统计（最小 / 平均 / 最大） ----------
-      - type: statistics-graph
-        title: 用气统计（每月 最小 / 平均 / 最大）
-        period: month
-        days_to_show: 365
-        stat_types:
-          - min
-          - mean
-          - max
-        chart_type: line
-        entities:
-          - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-          - sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+          # ---- 用气量与累计表数趋势 ----
+          - type: custom:apexcharts-card
+            graph_span: "13month"
+            header:
+              show: true
+              title: 用气量与累计表数趋势
+            series:
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+                name: "累计表数 1500185660"
+                type: line
+                color: "#E63946"
+                stroke_width: 3
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                name: "本期用气 1500185660"
+                type: column
+                color: "#457B9D"
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+                name: "累计表数 1500185695"
+                type: line
+                color: "#F4A261"
+                stroke_width: 3
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                name: "本期用气 1500185695"
+                type: column
+                color: "#2A9D8F"
 
-      # ---------- 账户余额与欠费 ----------
-      - type: custom:apexcharts-card
-        graph_span: "13month"
-        header:
-          show: true
-          title: 账户余额与欠费（¥）
-        series:
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-            name: 余额 1500185660
-            type: area
-            color: "#2A9D8F"
-            opacity: 0.3
-          - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-            name: 欠费 1500185660
-            type: line
-            color: "#E63946"
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-            name: 余额 1500185695
-            type: area
-            color: "#8AB17D"
-            opacity: 0.3
-          - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-            name: 欠费 1500185695
-            type: line
-            color: "#F4A261"
+          # ---- 月度用气对比（历史比对核心） ----
+          - type: custom:apexcharts-card
+            graph_span: "13month"
+            header:
+              show: true
+              title: 月度用气对比（历史比对）
+            series:
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                name: "1500185660"
+                type: column
+                color: "#457B9D"
+                group_by:
+                  func: avg
+                  duration: 1month
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                name: "1500185695"
+                type: column
+                color: "#2A9D8F"
+                group_by:
+                  func: avg
+                  duration: 1month
 
-      # ---------- 账单明细（按属性下钻） ----------
-      - type: entities
-        title: 账单明细 · 1500185660
-        entities:
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-          - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-            attribute: 欠费笔数
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-            attribute: 上次抄表日期
-          - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-            attribute: 户址
-          - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-            attribute: 阶梯明细
+          # ---- 账单金额趋势 ----
+          - type: custom:apexcharts-card
+            graph_span: "13month"
+            header:
+              show: true
+              title: 账单金额趋势（¥）
+            series:
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+                name: "账单 1500185660"
+                type: area
+                color: "#E63946"
+                opacity: 0.35
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+                name: "账单 1500185695"
+                type: area
+                color: "#2A9D8F"
+                opacity: 0.35
 
-      - type: entities
-        title: 账单明细 · 1500185695
-        entities:
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-          - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
-            attribute: 欠费笔数
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-            attribute: 上次抄表日期
-          - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
-            attribute: 户址
-          - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-            attribute: 阶梯明细
+          # ---- 账户余额与欠费 ----
+          - type: custom:apexcharts-card
+            graph_span: "13month"
+            header:
+              show: true
+              title: 账户余额与欠费（¥）
+            series:
+              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+                name: "余额 1500185660"
+                type: area
+                color: "#2A9D8F"
+                opacity: 0.3
+              - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+                name: "欠费 1500185660"
+                type: line
+                color: "#E63946"
+              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+                name: "余额 1500185695"
+                type: area
+                color: "#8AB17D"
+                opacity: 0.3
+              - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+                name: "欠费 1500185695"
+                type: line
+                color: "#F4A261"
+
+      # ---------- 两户号账单明细（并排） ----------
+      - type: horizontal-stack
+        cards:
+          - type: entities
+            title: 账单明细 · 1500185660
+            show_header_toggle: false
+            entities:
+              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
+                name: 当前账期
+                icon: mdi:calendar
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+                name: 本期用气
+                icon: mdi:fire
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+                name: 本期表数
+                icon: mdi:gauge
+              - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+                name: 上期表数
+                icon: mdi:gauge-low
+              - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
+                name: 用气单价
+                icon: mdi:currency-cny
+              - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+                name: 本期账单
+                icon: mdi:receipt-text
+              - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+                name: 账户余额
+                icon: mdi:wallet
+              - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+                name: 欠费金额
+                icon: mdi:cash-remove
+
+          - type: entities
+            title: 账单明细 · 1500185695
+            show_header_toggle: false
+            entities:
+              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
+                name: 当前账期
+                icon: mdi:calendar
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+                name: 本期用气
+                icon: mdi:fire
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+                name: 本期表数
+                icon: mdi:gauge
+              - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+                name: 上期表数
+                icon: mdi:gauge-low
+              - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
+                name: 用气单价
+                icon: mdi:currency-cny
+              - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+                name: 本期账单
+                icon: mdi:receipt-text
+              - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+                name: 账户余额
+                icon: mdi:wallet
+              - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+                name: 欠费金额
+                icon: mdi:cash-remove
 
 # ============================================================
 # 【纯原生备用方案 · 零 HACS 依赖】
-# 如果你不想装 apexcharts-card / auto-entities，把下面这段单独作为一个 view
+# 如果你不想装 apexcharts-card，把下面这段单独作为一个 view
 # 粘进仪表盘原始配置即可（历史比对用 statistics-graph 柱状，趋势用 history-graph）。
 # 注意：实体 id 已按你的拼音 slug 格式写。
 # ------------------------------------------------------------
@@ -223,18 +293,62 @@ views:
 #     path: towngas-native
 #     icon: mdi:gas-cylinder
 #     cards:
-#       - type: glance
-#         title: 概览 · 1500185660
-#         columns: 4
-#         entities:
-#           - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-#           - sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
-#           - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
-#           - sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
-#           - sensor.gang_hua_ran_qi_1500185660_zhang_qi
-#           - sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
-#           - sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
-#           - sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+#       - type: horizontal-stack
+#         cards:
+#           - type: entities
+#             title: 概览 · 1500185660
+#             entities:
+#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
+#                 name: 本期用气
+#                 icon: mdi:fire
+#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
+#                 name: 本期账单
+#                 icon: mdi:receipt-text
+#               - entity: sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
+#                 name: 账户余额
+#                 icon: mdi:wallet
+#               - entity: sensor.gang_hua_ran_qi_1500185660_qian_fei_jin_e
+#                 name: 欠费金额
+#                 icon: mdi:cash-remove
+#               - entity: sensor.gang_hua_ran_qi_1500185660_zhang_qi
+#                 name: 当前账期
+#                 icon: mdi:calendar
+#               - entity: sensor.gang_hua_ran_qi_1500185660_yong_qi_dan_jie
+#                 name: 用气单价
+#                 icon: mdi:currency-cny
+#               - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_biao_shu
+#                 name: 本期表数
+#                 icon: mdi:gauge
+#               - entity: sensor.gang_hua_ran_qi_1500185660_shang_qi_biao_shu
+#                 name: 上期表数
+#                 icon: mdi:gauge-low
+#           - type: entities
+#             title: 概览 · 1500185695
+#             entities:
+#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
+#                 name: 本期用气
+#                 icon: mdi:fire
+#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
+#                 name: 本期账单
+#                 icon: mdi:receipt-text
+#               - entity: sensor.gang_hua_ran_qi_1500185695_zhang_hu_yu_e
+#                 name: 账户余额
+#                 icon: mdi:wallet
+#               - entity: sensor.gang_hua_ran_qi_1500185695_qian_fei_jin_e
+#                 name: 欠费金额
+#                 icon: mdi:cash-remove
+#               - entity: sensor.gang_hua_ran_qi_1500185695_zhang_qi
+#                 name: 当前账期
+#                 icon: mdi:calendar
+#               - entity: sensor.gang_hua_ran_qi_1500185695_yong_qi_dan_jie
+#                 name: 用气单价
+#                 icon: mdi:currency-cny
+#               - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_biao_shu
+#                 name: 本期表数
+#                 icon: mdi:gauge
+#               - entity: sensor.gang_hua_ran_qi_1500185695_shang_qi_biao_shu
+#                 name: 上期表数
+#                 icon: mdi:gauge-low
 #       - type: statistics-graph
 #         title: 月度用气对比（历史比对，柱状）
 #         period: month
@@ -258,13 +372,4 @@ views:
 #           - sensor.gang_hua_ran_qi_1500185660_ben_qi_zhang_dan_jin_e
 #           - sensor.gang_hua_ran_qi_1500185660_zhang_hu_yu_e
 #           - sensor.gang_hua_ran_qi_1500185695_ben_qi_zhang_dan_jin_e
-#       - type: statistics-graph
-#         title: 用气统计(最小/平均/最大)
-#         period: month
-#         days_to_show: 365
-#         stat_types: [min, mean, max]
-#         chart_type: line
-#         entities:
-#           - sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-#           - sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
 # ============================================================
