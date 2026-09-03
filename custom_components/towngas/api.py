@@ -154,8 +154,9 @@ class TownGasApiClient:
 
         new_access = data.get("access_token") if isinstance(data, dict) else None
         if not new_access:
-            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
-            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
+            safe = data if isinstance(data, dict) else {}
+            rc = safe.get("resultCode") or safe.get("result_code")
+            msg = safe.get("resultMsg") or safe.get("result_msg") or ""
             self.tokens.last_refresh_error = (
                 f"服务端拒绝 resultCode={rc} {msg}".strip() or "响应异常"
             )
@@ -203,8 +204,9 @@ class TownGasApiClient:
 
         new_access = data.get("access_token") if isinstance(data, dict) else None
         if not new_access:
-            rc = (data or {}).get("resultCode") or (data or {}).get("result_code")
-            msg = (data or {}).get("resultMsg") or (data or {}).get("result_msg") or ""
+            safe = data if isinstance(data, dict) else {}
+            rc = safe.get("resultCode") or safe.get("result_code")
+            msg = safe.get("resultMsg") or safe.get("result_msg") or ""
             if rc:
                 self.tokens.last_refresh_error = f"服务端拒绝 resultCode={rc} {msg}".strip()
             else:

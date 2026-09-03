@@ -34,6 +34,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import TokenStore, TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
     CONF_ACCESS_TOKEN,
+    CONF_BASE_URL,
     CONF_ORG_CODE,
     CONF_REFRESH_TOKEN,
     CONF_SUBS_CODE,
@@ -272,6 +273,11 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
                 description_placeholders["detail"] = _format_detail(err)
                 description_placeholders["base_url"] = base_url
+            except Exception as err:  # noqa: BLE001 - surface any unexpected error to the user
+                _LOGGER.exception("港华燃气配置流意外错误: %s", err)
+                errors["base"] = "cannot_connect"
+                description_placeholders["detail"] = _format_detail(err)
+                description_placeholders["base_url"] = base_url
             else:
                 self._access_token = finalized[CONF_ACCESS_TOKEN]
                 self._refresh_token = finalized[CONF_REFRESH_TOKEN]
@@ -365,6 +371,10 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ACCESS_TOKEN] = "invalid_auth"
                 description_placeholders["detail"] = _format_detail(err)
             except TownGasApiError as err:
+                errors["base"] = "cannot_connect"
+                description_placeholders["detail"] = _format_detail(err)
+            except Exception as err:  # noqa: BLE001 - surface any unexpected error to the user
+                _LOGGER.exception("港华燃气 reauth 意外错误: %s", err)
                 errors["base"] = "cannot_connect"
                 description_placeholders["detail"] = _format_detail(err)
             else:
