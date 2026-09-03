@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Final
 
+# 集成版本（与 manifest.json 保持一致；仅用于启动日志，方便确认 HA 里实际跑的是哪版）。
+VERSION: Final = "1.2.1"
+
 DOMAIN: Final = "towngas"
 LOGGER: Final = logging.getLogger(__package__)
 
@@ -22,7 +25,7 @@ DEFAULT_SCAN_INTERVAL: Final = 21600                # 默认 6 小时
 OPT_TOKEN_REFRESH_INTERVAL: Final = "token_refresh_interval"  # Token 健康检查间隔（秒）
 # Token 健康检查间隔（秒）。实测 access_token 寿命仅 899 秒，
 # 默认取 900 秒使其同时充当保活与失效探测（取值须落在 TOKEN_REFRESH_INTERVAL_* 之间）。
-DEFAULT_TOKEN_REFRESH_INTERVAL: Final = 900
+DEFAULT_TOKEN_REFRESH_INTERVAL: Final = 600
 
 # scan_interval 允许取值范围（秒）
 SCAN_INTERVAL_MIN: Final = 60

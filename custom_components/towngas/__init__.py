@@ -22,8 +22,10 @@ from .const import (
     CONF_TOKEN_EXPIRES_AT,
     DEFAULT_TOKEN_REFRESH_INTERVAL,
     DOMAIN,
+    OAUTH_TOKEN_PATH,
     OPT_TOKEN_REFRESH_INTERVAL,
     SERVICE_FORCE_REFRESH,
+    VERSION,
 )
 from .coordinator import TownGasCoordinator
 
@@ -34,6 +36,13 @@ PLATFORMS = [Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Towngas from a config entry."""
+    _LOGGER.info(
+        "Towngas 港华燃气集成启动 v%s | 刷新端点 %s%s | 是否持有 refresh_token: %s",
+        VERSION,
+        entry.data[CONF_BASE_URL].rstrip("/"),
+        OAUTH_TOKEN_PATH,
+        bool(entry.data.get(CONF_REFRESH_TOKEN)),
+    )
     session = async_get_clientsession(hass)
     client = TownGasApiClient(
         session,

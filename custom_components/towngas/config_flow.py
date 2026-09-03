@@ -122,10 +122,16 @@ async def _finalize_tokens(
         base_url,
         TokenStore(access, refresh),
     )
-    # raises TownGasAuthError / TownGasApiError on failure
-    subs = await client.async_validate_token()
+    # ⚠️ 顺序很关键：先刷新、再校验。
+    # access_token 寿命仅 ~15 分钟，用户从浏览器复制再到 HA 粘贴，中间往往已过期。
+    # 若先 validate（用已死的 access_token）会直接抛 invalid_auth，连保存都失败，
+    # 而 refresh_token（不轮换、可永久复用）根本没机会用 → 陷入「粘贴→过期→再粘贴」死循环。
+    # 先 try_refresh 会用 refresh_token 换出新鲜 access_token，再用它去 validate / 拉户号。
     expires_at = 0.0
     refresh_ok = await client.async_try_refresh_token()
+    # 用（刷新后的）access_token 校验并拉户号；若两者都失效则抛 TownGasAuthError，
+    # 由上层 flow 显示 invalid_auth。
+    subs = await client.async_validate_token()
     if refresh_ok:
         access = client.tokens.access_token
         refresh = client.tokens.refresh_token
