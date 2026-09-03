@@ -106,14 +106,14 @@ views:
           title: 月度用气对比（历史比对）
         series:
           - entity: sensor.gang_hua_ran_qi_1500185660_ben_qi_yong_qi
-            name: 1500185660
+            name: "1500185660"
             type: column
             color: "#457B9D"
             group_by:
               func: avg
               duration: 1month
           - entity: sensor.gang_hua_ran_qi_1500185695_ben_qi_yong_qi
-            name: 1500185695
+            name: "1500185695"
             type: column
             color: "#2A9D8F"
             group_by:
