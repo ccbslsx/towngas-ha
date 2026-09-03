@@ -79,14 +79,17 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             update_interval=timedelta(seconds=interval_seconds),
         )
 
-    async def _fetch_sub(
-        self, subs_code: str, org_code: str
-    ) -> dict[str, Any]:
+    async def _fetch_sub(self, sub: dict[str, Any]) -> dict[str, Any]:
         """Fetch all data for one subscription; tolerate partial failures."""
+        subs_id = sub.get("subs_id")
+        subs_code = sub.get("subs_code")
+        org_code = sub.get("org_code")
         result: dict[str, Any] = {
+            "subs_id": subs_id,
             "subs_code": subs_code,
             "org_code": org_code,
             "sub_info": {},
+            "reading": {},
             "bills": [],
             "balance": None,
             "arrears": None,
@@ -99,60 +102,58 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         #  各 _get 仍会在遇 20001 时就地刷新重试一次。
         await self.client.async_refresh_if_near_expiry()
 
-        # 1. Bill history (contains readings / usage / amounts)
+        # 1. 本期表数（核心、已验证可用）：preCheck(subsId) 优先，回退 subsCode+orgCode。
+        #    这是 v1.5.0 解决「token 过期」之外的主数据，单独容错，失败不影响其它。
         try:
-            result["bills"] = await self.client.async_get_bills(
-                subs_code, org_code
+            reading = await self.client.async_get_reading(
+                subs_id, subs_code, org_code
             )
+            if reading:
+                result["reading"] = reading
         except TownGasAuthError:
             raise
         except TownGasApiError as err:
-            _LOGGER.warning("获取账单列表失败 %s: %s", subs_code, err)
+            _LOGGER.warning("获取表数失败 %s: %s", subs_id or subs_code, err)
 
-        # 1b. 本期表数兜底：vcc-cbs 的 queryHistoryFee 可能不含 currReading，
-        #     用 charge/preCheck 单独取一次并补进最新一条账单（传感器据此出表数）。
-        bills = result.get("bills") or []
-        if bills and not bills[0].get("currReading"):
+        # 2. 历史账单 / 余额 / 户信息（best-effort，需 subs_code+org_code）。
+        #    vcc-cbs 的字段名与金额单位尚未用真实 token 校准（待 authCode 探测），
+        #    因此全部容错、原始透传，缺字段时传感器显示 unknown 而不是崩溃。
+        if subs_code and org_code:
             try:
-                reading = await self.client.async_get_reading(subs_code, org_code)
-                if reading:
-                    bills[0].setdefault("currReading", reading.get("currReading"))
-                    bills[0].setdefault("lastReading", reading.get("lastReading"))
+                result["bills"] = await self.client.async_get_bills(
+                    subs_code, org_code
+                )
+            except TownGasAuthError:
+                raise
             except TownGasApiError as err:
-                _LOGGER.debug("获取表数失败 %s: %s", subs_code, err)
+                _LOGGER.warning("获取账单列表失败 %s: %s", subs_code, err)
 
-        # 2. Account balance
-        try:
-            result["balance"] = await self.client.async_get_balance(
-                subs_code, org_code
-            )
-        except TownGasAuthError:
-            raise
-        except TownGasApiError as err:
-            _LOGGER.warning("获取余额失败 %s: %s", subs_code, err)
+            try:
+                result["balance"] = await self.client.async_get_balance(
+                    subs_code, org_code
+                )
+            except TownGasAuthError:
+                raise
+            except TownGasApiError as err:
+                _LOGGER.warning("获取余额失败 %s: %s", subs_code, err)
 
-        # 3. Arrears (欠费) — v1.5.0 改为直接从账单列表推导
-        #    （历史账单里每条都带 totalUnpaidFee，累计未结清即为欠费）。
-        #    单位待探测确认：营业厅为「分」需 ÷100；vcc-cbs 单位未知，先原值透传，
-        #    探测锁定字段后统一校准。
-        unpaid_datas = [
-            b for b in bills if _to_float(b.get("totalUnpaidFee"))
-        ]
+            try:
+                result["sub_info"] = await self.client.async_get_sub_info(
+                    subs_code, org_code
+                )
+            except TownGasAuthError:
+                raise
+            except TownGasApiError as err:
+                _LOGGER.warning("获取户信息失败 %s: %s", subs_code, err)
+
+        # 3. 欠费（best-effort）：从账单列表推导，单位待校准（先原值透传）。
+        bills = result.get("bills") or []
+        unpaid_datas = [b for b in bills if _to_float(b.get("totalUnpaidFee"))]
         raw_arrears = sum(
             (_to_float(b.get("totalUnpaidFee")) or 0.0) for b in unpaid_datas
         )
         result["arrears"] = round(raw_arrears, 2)
         result["unpaid_count"] = len(unpaid_datas)
-
-        # 4. Subscription info (户主/户址) - nice to have
-        try:
-            result["sub_info"] = await self.client.async_get_sub_info(
-                subs_code, org_code
-            )
-        except TownGasAuthError:
-            raise
-        except TownGasApiError as err:
-            _LOGGER.warning("获取户信息失败 %s: %s", subs_code, err)
 
         return result
 
@@ -176,7 +177,7 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         results = await asyncio.gather(
             *(
-                self._fetch_sub(sub["subs_code"], sub["org_code"])
+                self._fetch_sub(sub)
                 for sub in self.subscriptions
             ),
             return_exceptions=True,
@@ -193,7 +194,8 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         data: dict[str, dict[str, Any]] = {}
         for sub, res in zip(self.subscriptions, results):
-            data[f"{sub['org_code']}_{sub['subs_code']}"] = res
+            key = sub.get("subs_code") or sub.get("subs_id") or "default"
+            data[key] = res
         self._last_update_ts = time.time()
         return data
 

@@ -1,4 +1,19 @@
-"""Config flow for the Towngas (港华燃气) integration — v1.5.0 WeChat OAuth."""
+"""Config flow for the Towngas (港华燃气) integration — v1.5.0 WeChat OAuth.
+
+Setup is a two-step manual flow (mirrors the proven Hangzhou reference
+integration palafin02back/hztowngas):
+
+1. Paste the WeChat login ``code`` (from the redirect URL after logging in
+   inside WeChat) → it is exchanged for access + refresh tokens. No network
+   call that requires an org parameter is made here, because the WeChat-central
+   gateway's ``queryBindList`` needs an org identifier that cannot be
+   auto-discovered inside the integration.
+2. Manually enter the subscription identifier(s):
+     * ``subs_id``       — required; used by ``preCheck`` to fetch the meter
+                           reading (the core, proven-working sensor).
+     * ``subs_code``     — optional; needed for bill-history / balance sensors.
+     * ``org_code``      — optional; needed together with ``subs_code``.
+"""
 
 from __future__ import annotations
 
@@ -15,18 +30,14 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import (
-    SelectOptionDict,
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
-)
 
 from .api import TokenStore, TownGasApiClient, TownGasApiError, TownGasAuthError
 from .const import (
     CONF_ACCESS_TOKEN,
-    CONF_BASE_URL,
+    CONF_ORG_CODE,
     CONF_REFRESH_TOKEN,
+    CONF_SUBS_CODE,
+    CONF_SUBS_ID,
     CONF_SUBSCRIPTIONS,
     CONF_TOKEN_EXPIRES_AT,
     DEFAULT_BASE_URL,
@@ -60,9 +71,6 @@ def wechat_login_url() -> str:
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_ACCESS_TOKEN): str,
-        vol.Optional(
-            CONF_BASE_URL, description={"suggested_value": DEFAULT_BASE_URL}
-        ): str,
     }
 )
 
@@ -109,7 +117,6 @@ def _extract_auth_code(raw: str) -> str | None:
     if not raw:
         return None
     decoded = unquote(raw)
-    # JSON 形态
     if raw.startswith("{"):
         try:
             obj = json.loads(raw)
@@ -121,12 +128,10 @@ def _extract_auth_code(raw: str) -> str | None:
             code = obj.get("authCode") or obj.get("code")
             if code:
                 return str(code)
-        # JSON 被拷贝损坏：正则兜底
         m = re.search(r'"(?:authCode|code)"\s*:\s*"([^"]+)"', raw)
         if m:
             return m.group(1)
         return None
-    # URL 形态
     patterns = [
         r'[?&]authCode=([^&\s"\'}>]+)',
         r'[?&]code=([^&\s"\'}>]+)',
@@ -137,7 +142,6 @@ def _extract_auth_code(raw: str) -> str | None:
             code = m.group(1).strip().strip('"{}')
             if code:
                 return code
-    # 裸授权码（非 JSON、不含 token）
     if "access_token" not in raw and len(raw) < 120:
         return raw
     return None
@@ -169,13 +173,18 @@ async def _finalize_tokens(
     """Obtain usable tokens from either:
 
     1. a pasted **WeChat auth code** (``code``/``authCode`` from the login
-       redirect URL after scanning/logging in via WeChat) — exchanged via
+       redirect URL after logging in via WeChat) — exchanged via
        ``accessToekn?authCode=``; OR
     2. a pasted **access_token (+ optional refresh_token)** / full token JSON —
        validated, then proactively refreshed to capture a fresh token + expiry.
 
-    Returns a dict with access_token / refresh_token / token_expires_at /
-    subscriptions, plus ``code_ok`` / ``refresh_ok`` / ``refresh_error`` flags.
+    Returns a dict with access_token / refresh_token / token_expires_at, plus
+    ``code_ok`` / ``refresh_ok`` / ``refresh_error`` flags.
+
+    NOTE: no subscription auto-discovery is performed here — the WeChat-central
+    gateway's ``queryBindList`` requires an org parameter that cannot be
+    discovered inside the integration (see module docstring). The user supplies
+    the subscription identifiers in the next step.
     """
     auth_code = _extract_auth_code(raw)
     client = TownGasApiClient(
@@ -210,13 +219,13 @@ async def _finalize_tokens(
             refresh = client.tokens.refresh_token
             expires_at = client.tokens.expires_at
 
-    # 用（换发后的）access_token 拉户号列表校验；失效则抛 TownGasAuthError。
-    subs = await client.async_validate_token()
+    if not access:
+        raise TownGasAuthError("未能获得可用 access_token")
+
     return {
         CONF_ACCESS_TOKEN: access,
         CONF_REFRESH_TOKEN: refresh,
         CONF_TOKEN_EXPIRES_AT: expires_at,
-        CONF_SUBSCRIPTIONS: subs,
         "code_ok": used_code,
         "refresh_ok": (not used_code)
         and client.tokens.last_refresh_error is None
@@ -235,7 +244,6 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._refresh_token: str | None = None
         self._token_expires_at: float = 0.0
         self._base_url: str = DEFAULT_BASE_URL
-        self._subs: list[dict[str, Any]] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -269,7 +277,6 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._refresh_token = finalized[CONF_REFRESH_TOKEN]
                 self._token_expires_at = finalized[CONF_TOKEN_EXPIRES_AT]
                 self._base_url = base_url
-                self._subs = finalized[CONF_SUBSCRIPTIONS]
                 if (
                     not finalized.get("code_ok")
                     and finalized.get("refresh_ok") is False
@@ -277,10 +284,7 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _async_warn_refresh_unusable(
                         self.hass, finalized.get("refresh_error")
                     )
-                if not self._subs:
-                    errors["base"] = "no_subscriptions"
-                else:
-                    return await self.async_step_subs()
+                return await self.async_step_subs()
 
         return self.async_show_form(
             step_id="user",
@@ -293,51 +297,43 @@ class TownGasConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
-        options = [
-            SelectOptionDict(
-                value=f"{s.get('orgCode')}|{s.get('subsCode')}",
-                label=(
-                    f"{s.get('subsCode')} "
-                    f"{s.get('name') or s.get('displayAddr') or ''}".strip()
-                ),
-            )
-            for s in self._subs
-        ]
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_SUBSCRIPTIONS, default=[o["value"] for o in options]
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=options,
-                        multiple=True,
-                        mode=SelectSelectorMode.LIST,
-                    )
-                )
+                vol.Required(CONF_SUBS_ID): str,
+                vol.Optional(CONF_SUBS_CODE): str,
+                vol.Optional(CONF_ORG_CODE): str,
             }
         )
         if user_input is not None:
-            selected = user_input.get(CONF_SUBSCRIPTIONS) or []
-            if not selected:
-                errors[CONF_SUBSCRIPTIONS] = "no_subscriptions_selected"
+            subs_id = (user_input.get(CONF_SUBS_ID) or "").strip()
+            subs_code = (user_input.get(CONF_SUBS_CODE) or "").strip() or None
+            org_code = (user_input.get(CONF_ORG_CODE) or "").strip() or None
+            if not subs_id:
+                errors[CONF_SUBS_ID] = "required"
             else:
-                subs = []
-                for sel in selected:
-                    org_code, subs_code = sel.split("|", 1)
-                    subs.append({"org_code": org_code, "subs_code": subs_code})
+                subs = {
+                    "subs_id": subs_id,
+                    "subs_code": subs_code,
+                    "org_code": org_code,
+                }
                 return self.async_create_entry(
-                    title="港华燃气",
+                    title=f"港华燃气 {subs_code or subs_id}",
                     data={
                         CONF_ACCESS_TOKEN: self._access_token,
                         CONF_REFRESH_TOKEN: self._refresh_token,
                         CONF_TOKEN_EXPIRES_AT: self._token_expires_at,
                         CONF_BASE_URL: self._base_url,
-                        CONF_SUBSCRIPTIONS: subs,
+                        CONF_SUBSCRIPTIONS: [subs],
                     },
                 )
 
         return self.async_show_form(
-            step_id="subs", data_schema=schema, errors=errors
+            step_id="subs", data_schema=schema, errors=errors,
+            description_placeholders={
+                "subs_id_hint": "preCheck 读数接口用的户号标识（微信中央网关，必填）",
+                "subs_code_hint": "历史账单/余额接口用的户号（选填；不填则账单类传感器为空）",
+                "org_code_hint": "组织机构代码（选填；与 subs_code 一起填才有账单数据）",
+            },
         )
 
     async def async_step_reauth(

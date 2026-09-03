@@ -3,22 +3,23 @@
     "step": {
       "user": {
         "title": "Towngas (港华燃气)",
-        "description": "Authorize via WeChat first:\n1. Copy the 'WeChat login link' below and open it inside the WeChat app on your phone;\n2. Log in to your Towngas account inside WeChat; after success it redirects back with a ?code= parameter;\n3. Copy the full redirected URL (the one containing ?code=) from the address bar and paste it below — the integration will exchange it for a token.\n\nThe token itself lives ~2 hours, but the refresh_token stays valid for days; the integration silently refreshes every 30 minutes, so no frequent manual steps are needed. {detail}",
+        "description": "Authorize via WeChat first:\n1. Copy the WeChat login link below and open it inside WeChat on your phone;\n2. Log in to your Towngas account inside WeChat; it will redirect back with a ?code= parameter;\n3. Paste the full redirected URL (the one containing ?code=) below — the integration exchanges it for a token automatically.\n\nWeChat login link: {wechat_login_url}\n\nThe token itself lasts ~2 hours, but the refresh_token stays valid for days; the integration silently refreshes it every 30 minutes, so no frequent manual steps are needed. {detail}",
         "data": {
-          "access_token": "WeChat redirect URL with ?code= / auth code (or full token JSON)",
-          "base_url": "Gateway host (usually leave as default)"
+          "access_token": "WeChat redirect URL with ?code= / auth code (or full token JSON)"
         }
       },
       "subs": {
-        "title": "Select gas account(s)",
-        "description": "Select the gas account(s) to add as devices.",
+        "title": "Enter subscription identifiers",
+        "description": "The WeChat-central gateway cannot auto-discover subscriptions, so please enter them manually:\n- **subs_id**: required, used to read the current meter reading (core sensor);\n- **subs_code / org_code**: optional; only when filled will bill history and balance be fetched.\nFind subs_code / org_code in the Towngas WeChat mini-program under "My Accounts".",
         "data": {
-          "subscriptions": "Account"
+          "subs_id": "subs_id (required, for meter reading)",
+          "subs_code": "subs_code (optional, for bills/balance)",
+          "org_code": "org_code (optional, together with subs_code)"
         }
       },
       "reauth_confirm": {
         "title": "Token expired",
-        "description": "The token is no longer valid. Re-open the WeChat login link below, log in, and paste the redirected URL containing ?code= below; the integration will exchange it for a fresh token. {detail}",
+        "description": "The token is no longer valid. Re-open the WeChat login link below, log in, and paste the redirected URL containing ?code= — the integration will exchange it for a fresh token. {detail}",
         "data": {
           "access_token": "WeChat redirect URL with ?code= / auth code"
         }
@@ -27,9 +28,8 @@
     "error": {
       "cannot_connect": "Cannot connect to the Towngas server",
       "invalid_auth": "Token is invalid or expired",
-      "invalid_token_format": "Cannot parse: paste the full redirected URL containing ?code=, or a full token JSON",
-      "no_subscriptions": "No gas account is bound to this user; bind one first",
-      "no_subscriptions_selected": "Select at least one account"
+      "invalid_token_format": "Unrecognized input: paste the full WeChat redirect URL (with ?code=) or a complete token JSON",
+      "required": "subs_id is required"
     },
     "abort": {
       "reauth_successful": "Re-authentication successful"
@@ -39,17 +39,17 @@
     "step": {
       "init": {
         "title": "Towngas options",
-        "description": "Daily maintenance window 23:30–00:30 (CST): data requests are skipped and sensors keep the last reading; token health check is unaffected.",
+        "description": "Daily maintenance window is 23:30–00:30 (CST); data requests are skipped then and sensors keep the last reading. Token health check is unaffected.",
         "data": {
-          "scan_interval": "Data refresh interval (s, 60-86400, default 21600)",
-          "token_refresh_interval": "Token refresh interval (s, 300-7200, default 1800)"
+          "scan_interval": "Data refresh interval (seconds, 60-86400, default 21600)",
+          "token_refresh_interval": "Token refresh interval (seconds, 300-7200, default 1800)"
         }
       }
     },
     "error": {
-      "invalid_number": "Enter an integer",
-      "scan_out_of_range": "Data refresh interval must be between 60 and 86400",
-      "token_out_of_range": "Token refresh interval must be between 300 and 7200"
+      "invalid_number": "Please enter an integer",
+      "scan_out_of_range": "Data refresh interval must be between 60 and 86400 seconds",
+      "token_out_of_range": "Token refresh interval must be between 300 and 7200 seconds"
     }
   }
 }

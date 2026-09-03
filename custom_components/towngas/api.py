@@ -292,8 +292,16 @@ class TownGasApiClient:
     # Public API
     # ------------------------------------------------------------------
     async def async_validate_token(self) -> list[dict[str, Any]]:
-        """Validate the token and return the list of bound subscriptions."""
-        return await self.async_get_bound_subs()
+        """Validate the token (liveness check) — returns an empty list.
+
+        v1.5.0: the previous auto-discovery via ``queryBindList`` required an
+        org parameter that cannot be discovered inside the integration (the
+        server rejects any guessed value), so it is no longer used. We instead
+        do a lightweight liveness probe via ``getLoginUserInfo`` (no org needed)
+        to confirm the token is still accepted; the return value is unused.
+        """
+        await self.async_get_user_info()
+        return []
 
     async def async_get_bound_subs(self) -> list[dict[str, Any]]:
         """户号管理：返回本账户绑定的户号列表（已归一化为 subsCode/orgCode）。"""
@@ -368,20 +376,51 @@ class TownGasApiClient:
         return {}
 
     async def async_get_reading(
-        self, subs_code: str, org_code: str
+        self,
+        subs_id: str | None = None,
+        subs_code: str | None = None,
+        org_code: str | None = None,
     ) -> dict[str, Any] | None:
-        """本期表数（charge/preCheck → currReading）。"""
-        data = await self._cbs_get(
-            "/charge/preCheck", {"subsCode": subs_code, "orgCode": org_code}
-        )
-        datas = data.get("datas") if isinstance(data, dict) else None
-        if not isinstance(datas, dict):
-            return None
-        lst = datas.get("readingRptList") or []
-        if not lst:
-            return None
-        first = lst[0] if isinstance(lst[0], dict) else {}
-        return {"currReading": first.get("currReading"), "lastReading": first.get("lastReading")}
+        """本期表数（charge/preCheck → currReading）。
+
+        优先用 ``subsId``（杭州版逆向实测字段名，最稳）；当仅持有
+        subsCode+orgCode（无 subsId）时回退到该组合。两种都失败返回 None。
+        """
+        attempts = []
+        if subs_id:
+            attempts.append(("/charge/preCheck (subsId)", {"subsId": subs_id}))
+        if subs_code and org_code:
+            attempts.append(
+                ("/charge/preCheck (subsCode+orgCode)",
+                 {"subsCode": subs_code, "orgCode": org_code})
+            )
+        for label, params in attempts:
+            try:
+                data = await self._cbs_get("/charge/preCheck", params)
+            except (TownGasAuthError, TownGasApiError) as err:
+                _LOGGER.debug("%s 失败: %s", label, err)
+                continue
+            datas = data.get("datas") if isinstance(data, dict) else None
+            if not isinstance(datas, dict):
+                continue
+            lst = datas.get("readingRptList") or []
+            first = lst[0] if (lst and isinstance(lst[0], dict)) else {}
+            curr = first.get("currReading")
+            last = first.get("lastReading")
+            if curr is None and last is None:
+                # 该组合无读数，尝试下一个
+                continue
+            return {"currReading": curr, "lastReading": last, "source": label}
+        return None
+
+    async def async_get_user_info(self) -> dict[str, Any]:
+        """轻量鉴权存活校验：getLoginUserInfo 不需要 org 参数。
+
+        返回加密的 encryptData（明文解密非必需）；只要不返回鉴权错误即说明
+        token 仍有效。用于配置流/健康检查的 liveness 探测，替代需要 org 的
+        queryBindList（后者在集成内无法自动发现 org，会卡死配置）。
+        """
+        return await self._cbs_get("/usersubs/getLoginUserInfo")
 
     # ------------------------------------------------------------------
     # Field normalization（双命名兜底 + 原始字段透传）

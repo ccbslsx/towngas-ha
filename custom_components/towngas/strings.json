@@ -3,17 +3,18 @@
     "step": {
       "user": {
         "title": "港华燃气（Towngas）",
-        "description": "请先在微信中打开登录链接完成授权：\n1. 复制下面的「微信登录链接」，在手机微信里打开；\n2. 微信内登录港华燃气账户，登录成功会自动跳回并带上 ?code= 参数；\n3. 把跳转后地址栏里整段带 ?code= 的网址复制粘贴到下面，集成会自动换发 token。\n\n该 token 本身有效期约 2 小时，但 refresh_token 可稳定多日，集成每 30 分钟自动静默刷新，无需频繁手动操作。{detail}",
+        "description": "请先在微信中打开登录链接完成授权：\n1. 复制下面的「微信登录链接」，在手机微信里打开；\n2. 微信内登录港华燃气账户，登录成功会自动跳回并带上 ?code= 参数；\n3. 把跳转后地址栏里整段带 ?code= 的网址复制粘贴到下面，集成会自动换发 token。\n\n微信登录链接：{wechat_login_url}\n\n该 token 本身有效期约 2 小时，但 refresh_token 可稳定多日，集成每 30 分钟自动静默刷新，无需频繁手动操作。{detail}",
         "data": {
-          "access_token": "微信登录后地址栏里的 ?code= 网址 / 授权码（或完整 token JSON）",
-          "base_url": "网关地址（一般无需修改）"
+          "access_token": "微信登录后地址栏里的 ?code= 网址 / 授权码（或完整 token JSON）"
         }
       },
       "subs": {
-        "title": "选择燃气户号",
-        "description": "选择要添加为设备的燃气户号。",
+        "title": "填写燃气户号",
+        "description": "微信中央网关的户号无法自动发现，请手动填写：\n- **户号标识(subs_id)**：必填，用于读取本期表数（核心传感器）；\n- **户号(subs_code) / 组织机构代码(org_code)**：选填，填写后才会拉取历史账单与余额。\n户号与组织机构代码可在港华燃气微信小程序 / H5 的「我的户号」页面查看。",
         "data": {
-          "subscriptions": "户号"
+          "subs_id": "户号标识 subs_id（必填，用于读数）",
+          "subs_code": "户号 subs_code（选填，用于账单/余额）",
+          "org_code": "组织机构代码 org_code（选填，与 subs_code 一起填）"
         }
       },
       "reauth_confirm": {
@@ -28,8 +29,7 @@
       "cannot_connect": "无法连接到港华燃气服务器",
       "invalid_auth": "Token 无效或已过期",
       "invalid_token_format": "无法解析：请粘贴微信登录跳回地址里带 ?code= 的整段网址，或完整的 token JSON",
-      "no_subscriptions": "该账号下没有绑定任何户号，请先在微信/营业厅绑定",
-      "no_subscriptions_selected": "请至少选择一个户号"
+      "required": "户号标识(subs_id)为必填项"
     },
     "abort": {
       "reauth_successful": "重新认证成功"

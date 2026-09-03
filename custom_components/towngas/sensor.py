@@ -215,8 +215,8 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
         sub_data = coordinator.data[sub_key]
         self.entity_description = description
         self._sub_key = sub_key
-        self._subs_code = sub_data["subs_code"]
-        self._org_code = sub_data["org_code"]
+        self._subs_code = sub_data.get("subs_code") or sub_data.get("subs_id") or sub_key
+        self._org_code = sub_data.get("org_code") or ""
         self._attr_unique_id = (
             f"{DOMAIN}_{self._org_code}_{self._subs_code}_{description.key}"
         )
@@ -252,12 +252,15 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
     def native_value(self) -> float | str | None:
         key = self.entity_description.key
         bill = self._latest_bill
+        reading = self._sub_data.get("reading") or {}
         if key == "current_usage":
-            return _f(bill.get("amount"))
+            # 优先账单里的用气量；读数接口本身不含用量时退化为 unknown
+            return _f(bill.get("amount")) if bill else None
         if key == "current_reading":
-            return _f(bill.get("currReading"))
+            # 核心：来自 preCheck 读数（已验证可用）
+            return _f(reading.get("currReading"))
         if key == "previous_reading":
-            return _f(bill.get("lastReading"))
+            return _f(reading.get("lastReading"))
         if key == "bill_amount":
             # v1.5.0 切换 vcc-cbs 网关：chrgSum 单位（分/元）待探测确认，
             # 此处先原值透传，锁定字段后统一校准（勿在此 ÷100）。
@@ -292,9 +295,11 @@ class TownGasSensorEntity(CoordinatorEntity[TownGasCoordinator], SensorEntity):
         bill = self._latest_bill
         attrs: dict[str, Any] = {}
         if key == "current_usage":
+            r = self._sub_data.get("reading") or {}
             attrs["账期"] = bill.get("yrMonth")
-            attrs["本期表数"] = _f(bill.get("currReading"))
-            attrs["上期表数"] = _f(bill.get("lastReading"))
+            attrs["本期表数"] = _f(r.get("currReading")) or _f(bill.get("currReading"))
+            attrs["上期表数"] = _f(r.get("lastReading")) or _f(bill.get("lastReading"))
+            attrs["读数来源"] = r.get("source") or "账单"
             attrs["阶梯明细"] = [
                 {
                     "单价": _f(s.get("price")),

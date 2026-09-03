@@ -16,6 +16,14 @@ CONF_BASE_URL: Final = "base_url"
 CONF_ACCESS_TOKEN: Final = "access_token"
 CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_SUBSCRIPTIONS: Final = "subscriptions"
+# 户号信息（v1.5.0 起手动填写，因为微信中央网关的 queryBindList 需要服务端才
+# 认得的 org 参数，无法在集成内自动发现；参考杭州版「用户手动填 subs_id」模型）。
+# - subs_id：preCheck 读数接口用的户号标识（杭州版实测字段名 subsId，最稳）。
+# - subs_code / org_code：历史账单 / 余额接口（queryHistoryFee / gasFeeBaseinfo）
+#   需要，选填；不填则账单类传感器留空（best-effort，待 authCode 探测校准）。
+CONF_SUBS_ID: Final = "subs_id"
+CONF_SUBS_CODE: Final = "subs_code"
+CONF_ORG_CODE: Final = "org_code"
 # 持久化的 token 过期时间戳（epoch 秒）。0 = 未知（退化为被动刷新）。
 CONF_TOKEN_EXPIRES_AT: Final = "token_expires_at"
 
