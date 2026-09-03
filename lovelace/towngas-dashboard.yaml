@@ -30,6 +30,8 @@ views:
     path: towngas
     icon: mdi:gas-cylinder
     badges: []
+    # 关键开关：关掉 panel 模式（默认会居中+左右留白），切到 grid 布局铺满整屏宽度
+    panel: false
     cards:
 
       # ---------- 顶层垂直栈（强制 1 列布局 · 解决 panel 模式自动 2 列造成的左右不对称） ----------
