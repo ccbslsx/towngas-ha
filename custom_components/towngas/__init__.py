@@ -143,7 +143,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 has_refresh = bool(coordinator.client.tokens.refresh_token)
                 if ok:
                     coordinator._persist_tokens()
-                    coordinator.async_write_ha_state()
+                    # 通知所有 CoordinatorEntity 刷新 state（让 4 个 token 传感器
+                    # 立即看到新的 access_token/expires_at/refresh_token）。
+                    # 用 DataUpdateCoordinator.async_update_listeners()，不是
+                    # coordinator.async_write_ha_state()——后者是 Entity 的方法，
+                    # coordinator 没有该方法（v1.5.2 之前的旧 bug，导致该服务
+                    # 始终以 "Unknown error" 失败）。
+                    coordinator.async_update_listeners()
                     after = coordinator.client.tokens.expires_at
                     _LOGGER.info(
                         "强制刷新成功 entry=%s 旧expires_at=%.0f 新expires_at=%.0f",
@@ -168,7 +174,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         e.title or e.entry_id, reason,
                     )
                     # 即使失败也刷新传感器，让「刷新状态」实体显示失败原因
-                    coordinator.async_write_ha_state()
+                    coordinator.async_update_listeners()
                     out["results"].append(
                         {
                             "entry": e.title or e.entry_id,
@@ -180,7 +186,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return out
 
         hass.services.async_register(
-            DOMAIN, SERVICE_FORCE_REFRESH, _handle_force_refresh
+            DOMAIN,
+            SERVICE_FORCE_REFRESH,
+            _handle_force_refresh,
+            # v1.5.2：必须声明支持响应，否则 service handler 抛未捕获异常时
+            # HA 会把它降级为「Unknown error」吞掉（用户根本看不到真原因）；
+            # 声明后异常 / 返回值都能透传到前端，调试更直接。
+            supports_response=SupportsResponse.ONLY,
         )
 
     # 诊断服务：导出各接口原始返回，便于在不暴露 authCode 的情况下校准字段
