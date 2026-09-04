@@ -25,6 +25,7 @@ from .const import (
     OPT_TOKEN_REFRESH_INTERVAL,
     SERVICE_DUMP_RAW,
     SERVICE_FORCE_REFRESH,
+    TOKEN_PERSIST_IN_PROGRESS,
     VERSION,
     WECHAT_HOST,
     WECHAT_OAUTH_PATH,
@@ -63,6 +64,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry,
         entry.data[CONF_SUBSCRIPTIONS],
     )
+
+    # v1.5.2 加固：**拉数据前先静默保活一次**。
+    # 原因：若 HA 重启时 access_token 恰好已过期，下面的
+    # async_config_entry_first_refresh() 会直接抛 ConfigEntryAuthFailed →
+    # 集成一启动就进入 reauth，用户必须重走微信登录。
+    # 但此时 refresh_token 通常仍然有效——先刷一次就能自愈，无需打扰用户。
+    # 此刻尚未注册 update listener，所以写回 entry 不会触发 reload。
+    try:
+        if await client.async_refresh_if_near_expiry():
+            _LOGGER.info("启动保活：access_token 已刷新，新的过期时间戳 %s",
+                         int(client.tokens.expires_at))
+            hass.config_entries.async_update_entry(
+                entry,
+                data={
+                    **entry.data,
+                    CONF_ACCESS_TOKEN: client.tokens.access_token,
+                    CONF_REFRESH_TOKEN: client.tokens.refresh_token,
+                    CONF_TOKEN_EXPIRES_AT: client.tokens.expires_at,
+                },
+            )
+    except Exception as err:  # noqa: BLE001
+        # 保活失败不能阻断启动：交由下面的首次刷新自行处理（它有 401 重试链路）
+        _LOGGER.debug("启动保活未成功（交由首次刷新处理）: %s", err)
 
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -202,5 +226,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the entry when its data or options change."""
+    """Reload the entry when its options change.
+
+    v1.5.2 **关键修复**：此处过去无条件 ``async_reload()``，而
+    ``coordinator._persist_tokens()`` 每次刷新 token 都会调用
+    ``async_update_entry(data=...)`` —— 于是「每续期一次 token 就重载一次集成」。
+
+    后果是双层的：
+      1. 重载瞬间实体下线 → 4 个 token 实体周期性 ``unavailable``
+         （用户看到的历史曲线就是「正常 / 不可用 / 正常 / 不可用」的锯齿）。
+      2. 某次重载若赶上鉴权边缘状态（网络抖动 / 服务端临时错误），
+         ``async_setup_entry`` 的首次刷新会抛 ``ConfigEntryAuthFailed`` →
+         集成进入 reauth → 保活定时器随卸载一起消失 → token 再无人续期 → 彻底过期。
+
+    修复：token 写回前会在 ``TOKEN_PERSIST_IN_PROGRESS`` 登记 entry_id，
+    这里命中即消费掉标记并跳过 reload。只有真正的 options 变更才重载。
+    """
+    if entry.entry_id in TOKEN_PERSIST_IN_PROGRESS:
+        TOKEN_PERSIST_IN_PROGRESS.discard(entry.entry_id)
+        _LOGGER.debug(
+            "跳过因 token 写回触发的重载 entry=%s", entry.title or entry.entry_id
+        )
+        return
     await hass.config_entries.async_reload(entry.entry_id)

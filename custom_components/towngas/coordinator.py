@@ -28,6 +28,10 @@ from .const import (
     MAINTENANCE_START_MINUTE,
     OPT_SCAN_INTERVAL,
     OPT_TOKEN_REFRESH_INTERVAL,
+    TOKEN_EXPIRY_BUFFER_SECS,
+    TOKEN_PERSIST_IN_PROGRESS,
+    TOKEN_REFRESH_FAILURE_THRESHOLD,
+    TOKEN_REFRESH_SAFETY_MARGIN_SECS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,12 +76,30 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.last_token_refresh: float | None = None
         self.last_token_refresh_ok: bool | None = None
         self._last_update_ts: float | None = None
+        # 连续刷新失败次数（抗抖动：达阈值才 reauth，见 async_token_health_check）
+        self._consecutive_refresh_failures: int = 0
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(seconds=interval_seconds),
         )
+
+    def _refresh_buffer(self) -> int:
+        """主动刷新的提前量（秒）。
+
+        为什么不能只用固定的 60 秒：保活定时器每 ``interval`` 秒才跑一次，
+        若提前量小于间隔，检查点可能落在 token **已经过期之后**。
+        例：token T 时刻签发（7200s 寿命），定时器在 T+1800/3600/5400/7200 检查，
+        提前量 60s → 需到 T+7140 之后才刷，而实际检查点是 T+7200 —— 此时
+        token 已死，必须先挨一次鉴权失败才能恢复；若定时器相位再偏一点
+        （比如 T+7300 才检查），token 已过期 100 秒。
+
+        所以提前量取「一个完整检查间隔 + 安全余量」，确保任何相位下刷新
+        检查点都落在 token 有效期内。
+        """
+        interval = int(self._token_refresh_interval or 0)
+        return max(TOKEN_EXPIRY_BUFFER_SECS, interval + TOKEN_REFRESH_SAFETY_MARGIN_SECS)
 
     async def _fetch_sub(self, sub: dict[str, Any]) -> dict[str, Any]:
         """Fetch all data for one subscription; tolerate partial failures."""
@@ -100,7 +122,10 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # （参考杭州版 _cbs_get 内 ensure_token() 的思路，避免多户号逐个拉取
         #  中途 token 过期导致个别接口返回 20001）。即便此处刷新失败，下方
         #  各 _get 仍会在遇 20001 时就地刷新重试一次。
-        await self.client.async_refresh_if_near_expiry()
+        # 用动态提前量，避免「检查点落在 token 过期之后」。
+        if self.client.tokens.is_near_expiry(self._refresh_buffer()):
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
 
         # 1. 本期表数（核心、已验证可用）：preCheck(subsId) 优先，回退 subsCode+orgCode。
         #    这是 v1.5.0 解决「token 过期」之外的主数据，单独容错，失败不影响其它。
@@ -201,8 +226,12 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         # 0. 主动续期：已知过期时间且临近过期时，先刷新再拉数据，
         #    避免把请求打在已经过期的 token 上（借鉴杭州项目的 ensure_token 思路）。
-        if await self.client.async_refresh_if_near_expiry():
-            self._persist_tokens()
+        #    用动态提前量（一个检查间隔 + 余量），保证刷新点落在有效期内。
+        if self.client.tokens.expires_at and self.client.tokens.is_near_expiry(
+            self._refresh_buffer()
+        ):
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
 
         results = await asyncio.gather(
             *(
@@ -253,17 +282,20 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if not self.client.tokens.access_token:
             return
 
-        # 1. 主动刷新：已知过期时间且临近过期
-        if self.client.tokens.is_near_expiry():
+        # 1. 主动刷新：已知过期时间且临近过期（用动态提前量，见 _refresh_buffer）
+        if self.client.tokens.expires_at and self.client.tokens.is_near_expiry(
+            self._refresh_buffer()
+        ):
             if await self.client.async_try_refresh_token():
                 self._persist_tokens()
                 self.last_token_refresh = time.time()
                 self.last_token_refresh_ok = True
+                self._consecutive_refresh_failures = 0
                 _LOGGER.info("港华燃气 token 主动刷新成功")
                 return
             # 临近过期但刷新失败 → 落到下面的校验分支决定是否需要 reauth
 
-        # 2. 校验 → 失败则尝试刷新 → 仍失败才 reauth
+        # 2. 校验 → 失败则尝试刷新 → 连续失败达阈值才 reauth
         try:
             await self.client.async_validate_token()
         except TownGasAuthError:
@@ -271,10 +303,30 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 self._persist_tokens()
                 self.last_token_refresh = time.time()
                 self.last_token_refresh_ok = True
+                self._consecutive_refresh_failures = 0
                 _LOGGER.info("港华燃气 token 过期后刷新成功")
                 return
-            _LOGGER.warning("港华燃气 token 已失效且刷新失败，触发重新认证流程")
             self.last_token_refresh_ok = False
+            self._consecutive_refresh_failures += 1
+            reason = self.client.tokens.last_refresh_error or "未知原因"
+            # 抗抖动：单次失败绝不立刻 reauth。网络抖动、服务端临时错误、
+            # 维护窗口都可能导致一次失败，而下一个周期往往自愈。
+            # 只有连续失败达到阈值（默认 3 次 ≈ 1.5 小时）才判定 token 真的废了。
+            if self._consecutive_refresh_failures < TOKEN_REFRESH_FAILURE_THRESHOLD:
+                _LOGGER.warning(
+                    "港华燃气 token 刷新失败（第 %s/%s 次，暂不 reauth，"
+                    "下个周期自动重试）：%s",
+                    self._consecutive_refresh_failures,
+                    TOKEN_REFRESH_FAILURE_THRESHOLD,
+                    reason,
+                )
+                return
+            _LOGGER.error(
+                "港华燃气 token 连续 %s 次刷新失败，判定已失效，触发重新认证：%s",
+                self._consecutive_refresh_failures,
+                reason,
+            )
+            self._consecutive_refresh_failures = 0
             try:
                 # HA 2024.2+ 的推荐写法：直接传 ConfigEntry，由框架创建 reauth 流。
                 # （旧版 async_start_reauth(flow_id) 已移除，调用会抛 AttributeError。）
@@ -285,15 +337,40 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         except TownGasApiError as err:
             # 网络抖动：下个周期再试，不触发 reauth
             _LOGGER.debug("Token 健康检查请求失败(可能网络抖动)，跳过: %s", err)
+        else:
+            # 校验通过（token 仍然有效）→ 重置连续失败计数，
+            # 避免历史抖动累积把集成推向 reauth。
+            if self._consecutive_refresh_failures:
+                _LOGGER.info(
+                    "港华燃气 token 恢复正常（此前连续失败 %s 次已清零）",
+                    self._consecutive_refresh_failures,
+                )
+                self._consecutive_refresh_failures = 0
 
     def _persist_tokens(self) -> None:
-        """Write refreshed tokens + expiry back into the config entry."""
+        """Write refreshed tokens + expiry back into the config entry.
+
+        v1.5.2 **关键修复**：``async_update_entry`` 会触发 entry 的 update
+        listener，而 listener 原本无条件 ``async_reload()`` → 每刷新一次 token
+        就重载一次集成（实体周期性 unavailable，且某次重载失败会打死集成）。
+        这里在写回前登记 entry_id，listener 命中后跳过 reload。
+        """
         new_data = dict(self.entry.data)
         new_data[CONF_ACCESS_TOKEN] = self.client.tokens.access_token
         if self.client.tokens.refresh_token:
             new_data[CONF_REFRESH_TOKEN] = self.client.tokens.refresh_token
         new_data[CONF_TOKEN_EXPIRES_AT] = self.client.tokens.expires_at
+        TOKEN_PERSIST_IN_PROGRESS.add(self.entry.entry_id)
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+        # 兜底清理：listener 会在下一个事件循环迭代消费掉标记。
+        # 若因集成正在卸载等原因 listener 未执行，10 秒后强制清理，
+        # 避免标记残留导致后续真正的 options 变更被误跳过 reload。
+        # 注意：不能用 try/finally 立即清理——async_update_entry 内部是用
+        # async_create_task 调度 listener 的，同步 finally 会在 listener
+        # 执行之前就清掉标记，抑制就失效了。
+        self.hass.loop.call_later(
+            10, TOKEN_PERSIST_IN_PROGRESS.discard, self.entry.entry_id
+        )
 
     # ------------------------------------------------------------------
     # 可观测性：下次刷新时间（供传感器展示「倒计时」）

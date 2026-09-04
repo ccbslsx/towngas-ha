@@ -52,6 +52,14 @@ _LOGGER = logging.getLogger(__name__)
 # resultCode values that mean "token invalid / expired" (carried in JSON body).
 AUTH_ERROR_CODES = {"20001", "40058"}
 
+# 兜底关键词：服务端偶发返回未列入上表的鉴权错误码（如 20002/40059/40001），
+# 若只认固定码就会**静默返回错误数据而不触发刷新**，表现为「传感器变 unknown
+# 但日志里没有鉴权报错」。这里对 resultMsg 做关键词匹配，命中也判为鉴权失败。
+AUTH_ERROR_KEYWORDS = (
+    "token", "登录", "登錄", "鉴权", "鑑權", "授权", "授權",
+    "过期", "過期", "失效", "无效", "無效", "未登录", "未登錄",
+)
+
 
 # ---------------------------------------------------------------------------
 # Signature helpers (WeChat-central gateway)
@@ -78,6 +86,33 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_expires_in(raw: Any) -> int:
+    """把服务端返回的 ``expires_in`` 归一化为合理的秒数。
+
+    两道防御（v1.5.2 新增），都是实际会致命的坑：
+
+    1. **毫秒值**：部分网关返回毫秒（如 ``7200000`` 而非 ``7200``）。直接当秒用
+       会让 ``expires_at`` 推到 80 多天后 → 永远不触发主动刷新 → token 实际
+       2 小时就过期，只能靠「先失败一次再被动刷」续命。
+    2. **异常小值**：返回 0 / 负数 / 几十秒会导致刷新风暴（每轮保活都刷）。
+
+    任一异常都回退到 ``DEFAULT_TOKEN_EXPIRES_IN``。
+    """
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_TOKEN_EXPIRES_IN
+    if value <= 0:
+        return DEFAULT_TOKEN_EXPIRES_IN
+    # 超过 1 天基本可判定是毫秒（access_token 寿命不可能这么长）
+    if value > 86400:
+        value = value // 1000
+    # 低于 5 分钟按默认值处理，避免刷新风暴
+    if value < 300:
+        return DEFAULT_TOKEN_EXPIRES_IN
+    return value
 
 
 class TownGasAuthError(Exception):
@@ -175,11 +210,10 @@ class TownGasApiClient:
         self.tokens.access_token = new_access
         if data.get("refresh_token"):
             self.tokens.refresh_token = data["refresh_token"]
-        self.tokens.expires_at = time.time() + int(
-            data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN
-        )
+        expires_in = _normalize_expires_in(data.get("expires_in"))
+        self.tokens.expires_at = time.time() + expires_in
         self.tokens.last_refresh_error = None
-        _LOGGER.info("微信 OAuth 换发成功，有效期 %s 秒", data.get("expires_in"))
+        _LOGGER.info("微信 OAuth 换发成功，有效期 %s 秒", expires_in)
         return True
 
     async def async_try_refresh_token(self) -> bool:
@@ -224,13 +258,14 @@ class TownGasApiClient:
             return False
 
         self.tokens.access_token = new_access
+        # 注意：refresh_token 可能轮换（服务端返回新的、旧的立即失效），
+        # 也可能不返回。只在服务端确实给了新值时才覆盖，保留旧值兜底。
         if data.get("refresh_token"):
             self.tokens.refresh_token = data["refresh_token"]
-        self.tokens.expires_at = time.time() + int(
-            data.get("expires_in") or DEFAULT_TOKEN_EXPIRES_IN
-        )
+        expires_in = _normalize_expires_in(data.get("expires_in"))
+        self.tokens.expires_at = time.time() + expires_in
         self.tokens.last_refresh_error = None
-        _LOGGER.info("微信 OAuth token 已刷新，有效期 %s 秒", data.get("expires_in"))
+        _LOGGER.info("微信 OAuth token 已刷新，有效期 %s 秒", expires_in)
         return True
 
     async def async_refresh_if_near_expiry(self) -> bool:
@@ -294,11 +329,31 @@ class TownGasApiClient:
             data = {}
 
         result_code = data.get("resultCode") if isinstance(data, dict) else None
-        if result_code is not None and str(result_code) in AUTH_ERROR_CODES:
+        if result_code is not None and self._is_auth_error(data, result_code):
             if not _retried and await self.async_try_refresh_token():
                 return await self._cbs_get(path, params, _retried=True)
             raise TownGasAuthError(data.get("resultMsg") or "access token 过期")
         return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _is_auth_error(data: dict[str, Any], result_code: Any) -> bool:
+        """判断响应是否代表「鉴权失败/token 失效」。
+
+        两条判据任一命中即可：
+          1. resultCode 落在已知鉴权错误码集合里；
+          2. resultCode 表示失败（非 0/200 系列）**且** resultMsg 命中鉴权关键词。
+
+        第 2 条是 v1.5.2 新增的兜底——服务端会返回未列入白名单的错误码，
+        只认固定码会漏判，导致拿错误数据当成功、不触发刷新。
+        """
+        code = str(result_code)
+        if code in AUTH_ERROR_CODES:
+            return True
+        # 明显的成功码直接放行，避免误判
+        if code in ("0", "200", "1"):
+            return False
+        msg = str(data.get("resultMsg") or data.get("result_msg") or "")
+        return any(kw in msg for kw in AUTH_ERROR_KEYWORDS)
 
     # ------------------------------------------------------------------
     # Public API

@@ -6,7 +6,7 @@ import logging
 from typing import Final
 
 # 集成版本（与 manifest.json 保持一致；仅用于启动日志，方便确认 HA 里实际跑的是哪版）。
-VERSION: Final = "1.5.1"
+VERSION: Final = "1.5.2"
 
 DOMAIN: Final = "towngas"
 LOGGER: Final = logging.getLogger(__package__)
@@ -76,7 +76,34 @@ WECHAT_REDIRECT_URI: Final = f"https://{WECHAT_HOST}/h5-gas/"
 # 微信 OAuth token 寿命（秒）。实测 access_token=7200，refresh_token 天级。
 DEFAULT_TOKEN_EXPIRES_IN: Final = 7200
 # 剩余寿命低于此秒数即主动刷新。取 60 秒（杭州版做法），7200s 寿命下极宽裕。
+# 注意：仅用于「已知过期时间」的即时判断；保活定时器用的是动态 buffer
+# （见 coordinator._refresh_buffer），保证刷新检查点不会落在 token 已过期之后。
 TOKEN_EXPIRY_BUFFER_SECS: Final = 60
+# 保活缓冲余量（秒）：在「健康检查间隔」之上额外预留的提前量。
+# 若只留 60s 而检查间隔是 1800s，检查点可能落在 token 过期之后（例如
+# T+7199 才检查，或 T+7300 才检查——此时 token 已死 100 秒），导致必须先
+# 挨一次鉴权失败才能恢复。留 120s 余量可确保刷新检查点永远落在有效期内。
+TOKEN_REFRESH_SAFETY_MARGIN_SECS: Final = 120
+# 连续刷新失败达到此次数才触发 reauth。
+# 目的：抗网络抖动/服务端临时错误——单次失败就 reauth 会把集成打死，
+# 而实际上很多失败下一个周期就自愈了。默认 3 次（配合 1800s 间隔 ≈ 1.5 小时容错窗口）。
+TOKEN_REFRESH_FAILURE_THRESHOLD: Final = 3
+
+# ---------------------------------------------------------------------------
+# 模块级共享状态（进程内，重启即清空）
+# ---------------------------------------------------------------------------
+# 正在把 token 写回 config entry 的 entry_id 集合。
+# 背景（v1.5.2 修复的严重 bug）：_persist_tokens() 调用
+# async_update_entry(data=...) 会触发 entry 的 update listener，而旧版 listener
+# 无条件执行 async_reload() → **每刷新一次 token 就重载一次整个集成**。
+# 后果有两层：
+#   1. 表现层：4 个 token 实体周期性变成 unavailable（重载瞬间实体下线），
+#      历史曲线呈现「正常 / 不可用 / 正常 / 不可用」的锯齿。
+#   2. 致命层：某次重载若恰好赶上鉴权边缘状态（网络抖动、服务端临时错误），
+#      async_setup_entry 的首次刷新就会抛 ConfigEntryAuthFailed → 集成进入
+#      reauth 状态 → 保活定时器随卸载一起消失 → token 再也没人续期 → 彻底过期。
+# 修复：写回 token 前登记 entry_id，listener 命中即跳过本次 reload。
+TOKEN_PERSIST_IN_PROGRESS: set = set()
 
 USER_AGENT: Final = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
