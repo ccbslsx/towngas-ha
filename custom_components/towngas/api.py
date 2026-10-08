@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -220,10 +221,16 @@ class TownGasApiClient:
         """Use refresh_token to obtain a fresh access_token (WeChat OAuth).
 
         Returns True and updates the token store on success.
+
+        v1.5.3 可观测性增强：刷新成功/失败均打印结构化日志，含
+        access_token 剩余寿命，便于事后复盘「token 何时、为何失效」。
         """
         refresh_token = self.tokens.refresh_token
         if not refresh_token:
             self.tokens.last_refresh_error = "未保存 refresh_token（粘贴内容里没有 refresh_token 字段）"
+            _LOGGER.warning(
+                "港华燃气 token 刷新失败：本地无 refresh_token（用户须重走微信登录）"
+            )
             return False
 
         ts = int(time.time() * 1000)
@@ -255,17 +262,30 @@ class TownGasApiClient:
                 self.tokens.last_refresh_error = f"服务端拒绝 resultCode={rc} {msg}".strip()
             else:
                 self.tokens.last_refresh_error = f"响应异常：{str(data)[:120]}"
+            _LOGGER.warning(
+                "港华燃气 token 刷新失败：服务端拒绝 resultCode=%s %s（refresh_token 可能已过期，需重登）",
+                rc, msg,
+            )
             return False
 
+        old_refresh = self.tokens.refresh_token
         self.tokens.access_token = new_access
         # 注意：refresh_token 可能轮换（服务端返回新的、旧的立即失效），
         # 也可能不返回。只在服务端确实给了新值时才覆盖，保留旧值兜底。
+        rt_rotated = False
         if data.get("refresh_token"):
             self.tokens.refresh_token = data["refresh_token"]
+            rt_rotated = bool(data["refresh_token"] != old_refresh)
         expires_in = _normalize_expires_in(data.get("expires_in"))
         self.tokens.expires_at = time.time() + expires_in
         self.tokens.last_refresh_error = None
-        _LOGGER.info("微信 OAuth token 已刷新，有效期 %s 秒", expires_in)
+        _LOGGER.info(
+            "微信 OAuth token 已刷新：新 access_token 有效期 %s 秒（约 %.2f 小时），"
+            "过期时间 %s；refresh_token %s",
+            expires_in, expires_in / 3600.0,
+            datetime.fromtimestamp(self.tokens.expires_at).strftime("%Y-%m-%d %H:%M:%S"),
+            "已轮换（务必持久化新值）" if rt_rotated else "未轮换",
+        )
         return True
 
     async def async_refresh_if_near_expiry(self) -> bool:

@@ -6,7 +6,7 @@ import logging
 from typing import Final
 
 # 集成版本（与 manifest.json 保持一致；仅用于启动日志，方便确认 HA 里实际跑的是哪版）。
-VERSION: Final = "1.5.2"
+VERSION: Final = "1.5.3"
 
 DOMAIN: Final = "towngas"
 LOGGER: Final = logging.getLogger(__package__)
@@ -88,6 +88,12 @@ TOKEN_REFRESH_SAFETY_MARGIN_SECS: Final = 120
 # 目的：抗网络抖动/服务端临时错误——单次失败就 reauth 会把集成打死，
 # 而实际上很多失败下一个周期就自愈了。默认 3 次（配合 1800s 间隔 ≈ 1.5 小时容错窗口）。
 TOKEN_REFRESH_FAILURE_THRESHOLD: Final = 3
+
+# v1.5.3：未知过期时间（expires_at==0，旧版残留/粘贴时未记 expires_in）时的
+# 保守主动续期窗口（秒）。此时无法算"临近过期"，只能按 access_token 寿命上限
+# 的一半兜底刷，避免只能等 401 被动续命（这正是"不知道何时失效"的根因之一）。
+# 取 3600s：7200s 寿命下，最迟在 T+3600 刷，留有 3600s 余量，足够宽裕。
+TOKEN_UNKNOWN_EXPIRY_REFRESH_SECS: Final = 3600
 
 # ---------------------------------------------------------------------------
 # 模块级共享状态（进程内，重启即清空）

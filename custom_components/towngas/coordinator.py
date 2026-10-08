@@ -30,6 +30,7 @@ from .const import (
     OPT_TOKEN_REFRESH_INTERVAL,
     TOKEN_EXPIRY_BUFFER_SECS,
     TOKEN_PERSIST_IN_PROGRESS,
+    TOKEN_UNKNOWN_EXPIRY_REFRESH_SECS,
     TOKEN_REFRESH_FAILURE_THRESHOLD,
     TOKEN_REFRESH_SAFETY_MARGIN_SECS,
 )
@@ -224,12 +225,20 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             )
             return self.data
 
-        # 0. 主动续期：已知过期时间且临近过期时，先刷新再拉数据，
-        #    避免把请求打在已经过期的 token 上（借鉴杭州项目的 ensure_token 思路）。
-        #    用动态提前量（一个检查间隔 + 余量），保证刷新点落在有效期内。
-        if self.client.tokens.expires_at and self.client.tokens.is_near_expiry(
-            self._refresh_buffer()
-        ):
+        # 0. 主动续期：
+        #    - 已知过期时间且临近过期时，先刷新再拉数据（动态提前量，保证刷新点落在有效期内）。
+        #    - 未知过期时间（expires_at==0，例如旧版残留/粘贴时未记下 expires_in）：
+        #      v1.5.3 新增「保守主动刷新」——按 access_token 寿命上限的一半（3600s）
+        #      兜底刷新，避免只能等 401 挨打、被动续命（这正是「不知道何时失效」的根因之一）。
+        unknown_expiry = not self.client.tokens.expires_at
+        if unknown_expiry:
+            _LOGGER.debug(
+                "港华燃气 token 过期时间未知(expires_at=0)，按 %ss 保守窗口主动续期",
+                TOKEN_UNKNOWN_EXPIRY_REFRESH_SECS,
+            )
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
+        elif self.client.tokens.is_near_expiry(self._refresh_buffer()):
             if await self.client.async_try_refresh_token():
                 self._persist_tokens()
 
@@ -246,6 +255,13 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 if await self.client.async_try_refresh_token():
                     self._persist_tokens()
                     return await self._async_update_data()
+                _LOGGER.error(
+                    "港华燃气数据刷新鉴权失败且刷新失败：access_token 剩余寿命判断=%s，"
+                    "是否持有 refresh_token=%s，最近刷新错误=%s",
+                    self.client.tokens.expires_at,
+                    bool(self.client.tokens.refresh_token),
+                    self.client.tokens.last_refresh_error or "无",
+                )
                 raise ConfigEntryAuthFailed from res
             if isinstance(res, BaseException):
                 raise UpdateFailed(f"更新港华燃气数据失败: {res}")
@@ -282,10 +298,20 @@ class TownGasCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if not self.client.tokens.access_token:
             return
 
-        # 1. 主动刷新：已知过期时间且临近过期（用动态提前量，见 _refresh_buffer）
-        if self.client.tokens.expires_at and self.client.tokens.is_near_expiry(
-            self._refresh_buffer()
-        ):
+        # 1. 主动刷新：
+        #    - 已知过期时间且临近过期（用动态提前量，见 _refresh_buffer）→ 主动刷。
+        #    - 未知过期时间（expires_at==0，旧版残留/粘贴时未记 expires_in）：
+        #      v1.5.3 新增「保守主动续期」，按 3600s 兜底刷一次，避免只能被动挨打。
+        if not self.client.tokens.expires_at:
+            if await self.client.async_try_refresh_token():
+                self._persist_tokens()
+                self.last_token_refresh = time.time()
+                self.last_token_refresh_ok = True
+                self._consecutive_refresh_failures = 0
+                _LOGGER.info("港华燃气 token 过期时间未知，已按兜底窗口主动刷新成功")
+                return
+            # 刷新失败但 expires_at 未知，不立即 reauth——交由下面校验分支判定
+        elif self.client.tokens.is_near_expiry(self._refresh_buffer()):
             if await self.client.async_try_refresh_token():
                 self._persist_tokens()
                 self.last_token_refresh = time.time()
